@@ -1,0 +1,16 @@
+logging:
+  structured:
+    format:
+      console: ""
+  level:
+    org.hibernate.SQL: warn
+
+ulock:
+  jwt:
+    allow-ephemeral-key: true
+  security:
+    # Minimum cost keeps the suite fast; production uses 12.
+    bcrypt-strength: 4
+  bootstrap:
+    admin-email: platform-admin@ulock.test
+    admin-password: platform-admin-password

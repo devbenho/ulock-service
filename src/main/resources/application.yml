@@ -1,0 +1,73 @@
+spring:
+  application:
+    name: ulock-service
+  datasource:
+    url: ${ULOCK_DB_URL:jdbc:postgresql://localhost:5432/ulock_db}
+    username: ${ULOCK_DB_USERNAME:ulock}
+    password: ${ULOCK_DB_PASSWORD:ulock}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        # Loads lazy collections (e.g. role permissions) for a whole page in one query.
+        default_batch_fetch_size: 100
+  flyway:
+    enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  forward-headers-strategy: framework
+  error:
+    include-stacktrace: never
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  tracing:
+    sampling:
+      probability: ${ULOCK_TRACING_SAMPLING:0.1}
+
+ulock:
+  jwt:
+    issuer: ${ULOCK_JWT_ISSUER:https://ulock.local}
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+    key-id: ${ULOCK_JWT_KEY_ID:ulock-key-1}
+    # PEM-encoded PKCS#8 RSA private key; the public key is derived from it. Required unless
+    # allow-ephemeral-key is set, which generates a throwaway key for local development.
+    private-key: ${ULOCK_JWT_PRIVATE_KEY:}
+    allow-ephemeral-key: ${ULOCK_JWT_ALLOW_EPHEMERAL_KEY:false}
+  security:
+    bcrypt-strength: 12
+    max-failed-logins: 5
+    failed-login-window: 15m
+    lock-duration: 15m
+    cors-allowed-origins: ${ULOCK_CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  bootstrap:
+    admin-email: ${ULOCK_BOOTSTRAP_ADMIN_EMAIL:}
+    admin-password: ${ULOCK_BOOTSTRAP_ADMIN_PASSWORD:}
+    admin-full-name: ${ULOCK_BOOTSTRAP_ADMIN_FULL_NAME:Platform Administrator}
