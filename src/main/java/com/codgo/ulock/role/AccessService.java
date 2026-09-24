@@ -2,8 +2,10 @@ package com.codgo.ulock.role;
 
 import com.codgo.ulock.role.RoleDtos.AccessSummaryResponse;
 import com.codgo.ulock.role.RoleDtos.RoleSummary;
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserService;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
+import com.codgo.ulock.sharedkernel.valueobject.UserId;
+import com.codgo.ulock.user.application.port.in.GetUserUseCase;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -15,12 +17,12 @@ public class AccessService {
 
     private final AccessRepository accessRepository;
     private final UserRoleRepository userRoles;
-    private final UserService userService;
+    private final GetUserUseCase getUser;
 
-    AccessService(AccessRepository accessRepository, UserRoleRepository userRoles, UserService userService) {
+    AccessService(AccessRepository accessRepository, UserRoleRepository userRoles, GetUserUseCase getUser) {
         this.accessRepository = accessRepository;
         this.userRoles = userRoles;
-        this.userService = userService;
+        this.getUser = getUser;
     }
 
     /** True only if the user and tenant are ACTIVE and one of the user's roles grants the permission. */
@@ -40,11 +42,11 @@ public class AccessService {
 
     @Transactional(readOnly = true)
     public AccessSummaryResponse summarize(UUID tenantId, UUID userId) {
-        User user = userService.get(tenantId, userId);
+        UserView user = getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
         List<RoleSummary> roles = userRoles.findRolesOfUser(userId).stream()
                 .map(r -> new RoleSummary(r.getId(), r.getName()))
                 .toList();
-        return new AccessSummaryResponse(user.getId(), user.getEmail(), user.getStatus(), roles,
+        return new AccessSummaryResponse(userId, user.email().value(), user.status(), roles,
                 effectivePermissionCodes(tenantId, userId));
     }
 }

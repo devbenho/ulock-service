@@ -1,13 +1,14 @@
 package com.codgo.ulock.tenant;
 
 import com.codgo.ulock.common.PlatformTenant;
-import com.codgo.ulock.common.error.ConflictException;
-import com.codgo.ulock.role.RoleAssignmentService;
 import com.codgo.ulock.role.ReservedRole;
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserDtos.CreateUserRequest;
-import com.codgo.ulock.user.UserRepository;
-import com.codgo.ulock.user.UserService;
+import com.codgo.ulock.role.RoleAssignmentService;
+import com.codgo.ulock.sharedkernel.exception.DomainException;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
+import com.codgo.ulock.user.application.port.in.CreateUserUseCase;
+import com.codgo.ulock.user.application.port.in.GetUserUseCase;
+import com.codgo.ulock.user.application.port.in.command.CreateUserCommand;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -28,23 +29,23 @@ class PlatformAdminBootstrap implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(PlatformAdminBootstrap.class);
 
     private final BootstrapProperties properties;
-    private final UserRepository users;
-    private final UserService userService;
+    private final GetUserUseCase getUser;
+    private final CreateUserUseCase createUser;
     private final RoleAssignmentService roleAssignments;
     private final TransactionTemplate transaction;
 
-    PlatformAdminBootstrap(BootstrapProperties properties, UserRepository users, UserService userService,
+    PlatformAdminBootstrap(BootstrapProperties properties, GetUserUseCase getUser, CreateUserUseCase createUser,
                            RoleAssignmentService roleAssignments, PlatformTransactionManager transactionManager) {
         this.properties = properties;
-        this.users = users;
-        this.userService = userService;
+        this.getUser = getUser;
+        this.createUser = createUser;
         this.roleAssignments = roleAssignments;
         this.transaction = new TransactionTemplate(transactionManager);
     }
 
     @Override
     public void run(ApplicationArguments args) {
-        if (users.existsByTenantId(PlatformTenant.ID)) {
+        if (getUser.hasUsers(TenantId.of(PlatformTenant.ID))) {
             return;
         }
         if (!StringUtils.hasText(properties.adminEmail()) || !StringUtils.hasText(properties.adminPassword())) {
@@ -54,14 +55,23 @@ class PlatformAdminBootstrap implements ApplicationRunner {
         }
         try {
             transaction.executeWithoutResult(status -> {
-                User admin = userService.create(PlatformTenant.ID, new CreateUserRequest(
+                UserView admin = createUser.createUser(new CreateUserCommand(TenantId.of(PlatformTenant.ID),
                         properties.adminEmail(), properties.adminFullName(), properties.adminPassword()));
-                roleAssignments.assignReserved(PlatformTenant.ID, admin.getId(), ReservedRole.PLATFORM_ADMIN);
+                roleAssignments.assignReserved(PlatformTenant.ID, admin.id().value(), ReservedRole.PLATFORM_ADMIN);
             });
             log.info("Bootstrapped the platform administrator");
-        } catch (DataIntegrityViolationException | ConflictException alreadyCreated) {
-            // Another instance starting at the same time won the race.
-            log.info("Platform administrator was bootstrapped by another instance");
+        } catch (DataIntegrityViolationException alreadyCreated) {
+            logLostRace();
+        } catch (DomainException rejected) {
+            if (rejected.category() != DomainException.Category.CONFLICT) {
+                throw rejected;
+            }
+            logLostRace();
         }
+    }
+
+    /** Another instance starting at the same time created the administrator first. */
+    private static void logLostRace() {
+        log.info("Platform administrator was bootstrapped by another instance");
     }
 }

@@ -2,8 +2,7 @@ package com.codgo.ulock.role;
 
 import static com.codgo.ulock.common.web.ValidationPatterns.NOT_BLANK;
 
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserStatus;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -65,10 +64,10 @@ public final class RoleDtos {
         }
     }
 
-    public record RoleMemberResponse(UUID userId, String email, String fullName, UserStatus status) {
+    public record RoleMemberResponse(UUID userId, String email, String fullName, String status) {
 
-        static RoleMemberResponse from(User user) {
-            return new RoleMemberResponse(user.getId(), user.getEmail(), user.getFullName(), user.getStatus());
+        static RoleMemberResponse from(UserView user) {
+            return new RoleMemberResponse(user.id().value(), user.email().value(), user.fullName(), user.status());
         }
     }
 
@@ -81,7 +80,7 @@ public final class RoleDtos {
     public record AccessSummaryResponse(
             UUID userId,
             String email,
-            UserStatus status,
+            String status,
             List<RoleSummary> roles,
             List<String> effectivePermissions) {}
 }

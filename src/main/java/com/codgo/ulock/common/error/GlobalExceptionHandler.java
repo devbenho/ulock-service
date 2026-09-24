@@ -1,5 +1,6 @@
 package com.codgo.ulock.common.error;
 
+import com.codgo.ulock.sharedkernel.exception.DomainException;
 import java.util.List;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -40,6 +41,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 .toList();
         problem.setProperty("errors", violations);
         return handleExceptionInternal(ex, problem, headers, status, request);
+    }
+
+    @ExceptionHandler(DomainException.class)
+    ProblemDetail handleDomainException(DomainException ex) {
+        HttpStatus status = switch (ex.category()) {
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case CONFLICT -> HttpStatus.CONFLICT;
+            case INVALID -> HttpStatus.BAD_REQUEST;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
+        };
+        return ProblemDetail.forStatusAndDetail(status, ex.getMessage());
     }
 
     @ExceptionHandler(AccessDeniedException.class)
