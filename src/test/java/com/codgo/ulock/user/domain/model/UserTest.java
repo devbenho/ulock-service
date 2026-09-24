@@ -10,20 +10,20 @@ import com.codgo.ulock.user.domain.event.UserActivated;
 import com.codgo.ulock.user.domain.event.UserCreated;
 import com.codgo.ulock.user.domain.event.UserDeactivated;
 import com.codgo.ulock.user.domain.event.UserPasswordReset;
-import com.codgo.ulock.user.domain.event.UserUpdated;
+import com.codgo.ulock.user.domain.event.UserRenamed;
 import com.codgo.ulock.user.domain.exception.InvalidUserException;
 import com.codgo.ulock.user.domain.exception.InvalidUserStateException;
-import com.codgo.ulock.user.domain.policy.LockoutPolicy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class UserTest {
 
     private static final Instant T0 = Instant.parse("2026-09-23T10:00:00Z");
-    private static final LockoutPolicy POLICY = new LockoutPolicy(5, Duration.ofMinutes(15), Duration.ofMinutes(15));
     private static final TenantId TENANT = TenantId.of(UUID.randomUUID());
 
     private final User user = User.register(TENANT, Email.of("u@example.test"), "hash", "  Jane Doe ", T0);
@@ -46,25 +46,24 @@ class UserTest {
     }
 
     @Test
-    void snapshotsRoundTrip() {
-        User copy = User.fromSnapshot(user.toSnapshot());
+    void restoringKeepsEveryFieldAndRecordsNoEvents() {
+        Instant locked = T0.plusSeconds(60);
+        User restored = User.restore(user.id(), TENANT, user.email(), "hash", "Jane", UserStatus.INACTIVE, T0, 3,
+                T0, locked, T0, T0.plusSeconds(1));
 
-        assertThat(copy.toSnapshot()).isEqualTo(user.toSnapshot());
-        assertThat(copy.pullDomainEvents()).isEmpty();
+        assertThat(restored.status()).isEqualTo(UserStatus.INACTIVE);
+        assertThat(restored.failedLoginCount()).isEqualTo(3);
+        assertThat(restored.lockedUntil()).isEqualTo(locked);
+        assertThat(restored.pullDomainEvents()).isEmpty();
     }
 
     @Nested
-    class Administration {
+    class StatusTransitions {
 
-        @Test
-        void renameRecordsAnEventOnlyWhenTheNameChanges() {
-            user.pullDomainEvents();
-
-            assertThat(user.rename("Jane Doe", T0)).isFalse();
-            assertThat(user.rename("Jane Smith", T0.plusSeconds(5))).isTrue();
-
-            assertThat(user.updatedAt()).isEqualTo(T0.plusSeconds(5));
-            assertThat(user.pullDomainEvents()).containsExactly(new UserUpdated(user.id(), TENANT, "Jane Smith", T0.plusSeconds(5)));
+        @ParameterizedTest(name = "{0} -> {1}: {2}")
+        @CsvSource({"ACTIVE, INACTIVE, true", "INACTIVE, ACTIVE, true", "ACTIVE, ACTIVE, false", "INACTIVE, INACTIVE, false"})
+        void allowedTransitionsAreExplicit(UserStatus from, UserStatus to, boolean allowed) {
+            assertThat(from.canTransitionTo(to)).isEqualTo(allowed);
         }
 
         @Test
@@ -92,6 +91,22 @@ class UserTest {
         @Test
         void systemCallersWithoutAnActorMayDeactivate() {
             assertThat(user.deactivate(null, T0)).isTrue();
+        }
+    }
+
+    @Nested
+    class Administration {
+
+        @Test
+        void renameRecordsUserRenamedOnlyWhenTheNameChanges() {
+            user.pullDomainEvents();
+
+            assertThat(user.rename("Jane Doe", T0)).isFalse();
+            assertThat(user.rename("Jane Smith", T0.plusSeconds(5))).isTrue();
+
+            assertThat(user.updatedAt()).isEqualTo(T0.plusSeconds(5));
+            assertThat(user.pullDomainEvents())
+                    .containsExactly(new UserRenamed(user.id(), TENANT, "Jane Smith", T0.plusSeconds(5)));
         }
 
         @Test
@@ -126,7 +141,7 @@ class UserTest {
             for (int i = 0; i < 4; i++) {
                 fail(T0);
             }
-            assertThat(fail(T0.plus(POLICY.window())).lockedNow()).isFalse();
+            assertThat(fail(T0.plus(User.FAILED_LOGIN_WINDOW)).lockedNow()).isFalse();
             assertThat(user.failedLoginCount()).isEqualTo(1);
         }
 
@@ -135,8 +150,8 @@ class UserTest {
             lockOut();
 
             assertThat(user.canAttemptLogin(T0)).isFalse();
-            assertThat(user.recordLoginAttempt(true, POLICY, T0).result()).isEqualTo(LoginAttempt.Result.LOCKED);
-            assertThat(user.recordLoginAttempt(true, POLICY, T0.plus(POLICY.lockDuration())).succeeded()).isTrue();
+            assertThat(user.recordLoginAttempt(true, T0).result()).isEqualTo(LoginAttempt.Result.LOCKED);
+            assertThat(user.recordLoginAttempt(true, T0.plus(User.LOCK_DURATION)).succeeded()).isTrue();
         }
 
         @Test
@@ -144,7 +159,7 @@ class UserTest {
             user.deactivate(null, T0);
 
             assertThat(user.canAttemptLogin(T0)).isFalse();
-            assertThat(user.recordLoginAttempt(true, POLICY, T0).result()).isEqualTo(LoginAttempt.Result.INACTIVE);
+            assertThat(user.recordLoginAttempt(true, T0).result()).isEqualTo(LoginAttempt.Result.INACTIVE);
         }
 
         @Test
@@ -152,18 +167,18 @@ class UserTest {
             fail(T0);
             fail(T0);
 
-            assertThat(user.recordLoginAttempt(true, POLICY, T0.plusSeconds(1)).succeeded()).isTrue();
+            assertThat(user.recordLoginAttempt(true, T0.plusSeconds(1)).succeeded()).isTrue();
             assertThat(user.failedLoginCount()).isZero();
             assertThat(user.lastLoginAt()).isEqualTo(T0.plusSeconds(1));
         }
     }
 
     private LoginAttempt fail(Instant at) {
-        return user.recordLoginAttempt(false, POLICY, at);
+        return user.recordLoginAttempt(false, at);
     }
 
     private void lockOut() {
-        for (int i = 0; i < POLICY.maxFailures(); i++) {
+        for (int i = 0; i < User.MAX_FAILED_LOGINS; i++) {
             fail(T0);
         }
     }

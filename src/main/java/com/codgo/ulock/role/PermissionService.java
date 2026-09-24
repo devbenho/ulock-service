@@ -51,15 +51,13 @@ class PermissionService {
     }
 
     /**
-     * Resolves permission ids a role in {@code tenantId} may hold: the tenant's own permissions and
-     * the system permissions available to it. Anything else is reported as unknown.
+     * Resolves ids to the permissions visible to {@code tenantId}: its own and the system ones.
+     * Other tenants' ids are reported as unknown so their existence is not revealed. Which of these a
+     * role may hold is {@link Role#replacePermissions}' rule.
      */
     @Transactional(readOnly = true)
-    List<Permission> resolveAssignable(UUID tenantId, Collection<UUID> ids) {
-        Set<String> excluded = excludedSystemCodes(tenantId);
-        List<Permission> found = permissions.findAllByIdVisibleTo(ids, tenantId).stream()
-                .filter(p -> !(p.isSystem() && excluded.contains(p.getCode())))
-                .toList();
+    List<Permission> resolveVisible(UUID tenantId, Collection<UUID> ids) {
+        List<Permission> found = permissions.findAllByIdVisibleTo(ids, tenantId);
         if (found.size() != ids.size()) {
             Set<UUID> unknown = new HashSet<>(ids);
             found.forEach(p -> unknown.remove(p.getId()));

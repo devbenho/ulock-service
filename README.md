@@ -57,7 +57,8 @@ Code is organised in vertical slices under `com.codgo.ulock`: `auth`, `tenant`, 
 ### Tokens
 
 - **User access token:** RS256 JWT, 15 minutes, with claims `sub` (userId), `tid` (tenantId) and `roles` (role names).
-  Other services verify it locally against the JWKS.
+  Other services verify it locally against the JWKS. It proves identity and tenant, not permissions: `roles` is
+  informational and can be stale. The authorization source of truth is `/authz/check`, which reads the database.
 - **Refresh token:** opaque, 7 days, stored as a SHA-256 hash, and rotated on every `/auth/refresh`. Presenting a
   rotated token again revokes all of that user's sessions and is audited as `REFRESH_TOKEN_REUSED`.
 - **Machine-client token:** issued by the OAuth 2.0 client-credentials grant at `POST /api/v1/auth/token`

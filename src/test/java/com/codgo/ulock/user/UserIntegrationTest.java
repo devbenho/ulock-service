@@ -82,7 +82,7 @@ class UserIntegrationTest extends IntegrationTest {
     }
 
     @Test
-    void updatesNameAndStatusAndAuditsOnlyRealChanges() throws Exception {
+    void renamesAndAuditsOnlyRealChanges() throws Exception {
         UUID userId = api.createUser(tenant, "rename@example.test");
 
         api.patch(tenant.adminToken(), users + "/" + userId, Map.of("fullName", "New Name"))
@@ -90,9 +90,25 @@ class UserIntegrationTest extends IntegrationTest {
                 .andExpect(jsonPath("$.fullName").value("New Name"));
         api.patch(tenant.adminToken(), users + "/" + userId, Map.of("fullName", "New Name")).andExpect(status().isOk());
 
-        api.get(tenant.adminToken(), "/api/v1/tenants/" + tenant.id() + "/audit-logs?action=USER_UPDATED")
+        api.get(tenant.adminToken(), "/api/v1/tenants/" + tenant.id() + "/audit-logs?action=USER_RENAMED")
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].details.fullName").value("New Name"));
+    }
+
+    @Test
+    void statusChangesAreAuditedAsExplicitActions() throws Exception {
+        UUID userId = api.createUser(tenant, "status@example.test");
+        String user = users + "/" + userId;
+
+        api.patch(tenant.adminToken(), user, Map.of("status", "INACTIVE")).andExpect(jsonPath("$.status").value("INACTIVE"));
+        api.patch(tenant.adminToken(), user, Map.of("status", "INACTIVE")).andExpect(status().isOk());
+        api.patch(tenant.adminToken(), user, Map.of("status", "ACTIVE")).andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        String audit = "/api/v1/tenants/" + tenant.id() + "/audit-logs?userId=" + tenant.adminId() + "&action=";
+        api.get(tenant.adminToken(), audit + "USER_DEACTIVATED")
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].targetId").value(userId.toString()));
+        api.get(tenant.adminToken(), audit + "USER_ACTIVATED").andExpect(jsonPath("$.totalElements").value(1));
     }
 
     @Test

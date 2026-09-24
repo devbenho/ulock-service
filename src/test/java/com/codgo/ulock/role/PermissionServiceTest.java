@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.codgo.ulock.audit.AuditService;
-import com.codgo.ulock.common.PlatformTenant;
 import com.codgo.ulock.common.error.ConflictException;
 import com.codgo.ulock.common.error.InvalidRequestException;
 import com.codgo.ulock.role.RoleDtos.CreatePermissionRequest;
@@ -26,22 +25,14 @@ class PermissionServiceTest {
     private final UUID tenantId = UUID.randomUUID();
 
     @Test
-    void platformOnlySystemPermissionsAreNotAssignableInOrdinaryTenants() throws Exception {
-        Permission tenantWrite = permission(null, "tenant:write");
+    void idsNotVisibleToTheTenantAreReportedAsUnknown() throws Exception {
         Permission userRead = permission(null, "user:read");
-        when(repository.findAllByIdVisibleTo(any(), any())).thenReturn(List.of(tenantWrite, userRead));
+        UUID foreign = UUID.randomUUID();
+        when(repository.findAllByIdVisibleTo(any(), any())).thenReturn(List.of(userRead));
 
-        assertThatThrownBy(() -> service.resolveAssignable(tenantId, Set.of(tenantWrite.getId(), userRead.getId())))
+        assertThatThrownBy(() -> service.resolveVisible(tenantId, Set.of(userRead.getId(), foreign)))
                 .isInstanceOf(InvalidRequestException.class)
-                .hasMessageContaining(tenantWrite.getId().toString());
-    }
-
-    @Test
-    void thePlatformTenantMayAssignEverySystemPermission() throws Exception {
-        Permission tenantWrite = permission(null, "tenant:write");
-        when(repository.findAllByIdVisibleTo(any(), any())).thenReturn(List.of(tenantWrite));
-
-        assertThat(service.resolveAssignable(PlatformTenant.ID, Set.of(tenantWrite.getId()))).containsExactly(tenantWrite);
+                .hasMessageContaining("Unknown permission ids: " + foreign + "'");
     }
 
     @Test

@@ -25,11 +25,12 @@ import com.codgo.ulock.sharedkernel.valueobject.Email;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.user.application.port.in.command.CreateUserCommand;
+import com.codgo.ulock.user.application.port.in.model.UserView;
+import com.codgo.ulock.user.application.service.UserQueryService;
 import com.codgo.ulock.user.application.service.UserService;
 import com.codgo.ulock.user.application.service.command.UpdateUserCommand;
 import com.codgo.ulock.user.domain.exception.EmailAlreadyInUseException;
 import com.codgo.ulock.user.domain.exception.UserNotFoundException;
-import com.codgo.ulock.user.domain.model.User;
 import com.codgo.ulock.user.domain.model.UserStatus;
 import java.time.Clock;
 import java.time.Instant;
@@ -96,12 +97,15 @@ class UserControllerWebMvcTest {
     UserService userService;
 
     @MockitoBean
+    UserQueryService userQueries;
+
+    @MockitoBean
     JwtDecoder jwtDecoder;
 
     @Test
     void listsUsersAsDtosWithTheDefaultSort() throws Exception {
-        User user = user("jane@example.test");
-        when(userService.list(eq(TenantId.of(TENANT)), eq(null), any()))
+        UserView user = user("jane@example.test");
+        when(userQueries.list(eq(TenantId.of(TENANT)), eq(null), any()))
                 .thenReturn(new PageResult<>(List.of(user), 0, 20, 1));
 
         mvc.perform(get(USERS).with(admin("user:read")))
@@ -112,14 +116,14 @@ class UserControllerWebMvcTest {
                 .andExpect(jsonPath("$.content[0].passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.totalElements").value(1));
 
-        verify(userService).list(TenantId.of(TENANT), null, new PageQuery(0, 20, List.of(
+        verify(userQueries).list(TenantId.of(TENANT), null, new PageQuery(0, 20, List.of(
                 new PageQuery.Sort("email", PageQuery.Direction.ASC), new PageQuery.Sort("id", PageQuery.Direction.ASC))));
     }
 
     @Test
     void createsAUserAndReturnsItsLocation() throws Exception {
-        User user = user("new@example.test");
-        when(userService.create(new CreateUserCommand(TenantId.of(TENANT), "new@example.test", "New", "long-password")))
+        UserView user = user("new@example.test");
+        when(userService.createUser(new CreateUserCommand(TenantId.of(TENANT), "new@example.test", "New", "long-password")))
                 .thenReturn(user);
 
         mvc.perform(post(USERS).with(admin("user:write")).contentType(MediaType.APPLICATION_JSON)
@@ -136,7 +140,7 @@ class UserControllerWebMvcTest {
                         .content("{\"email\": \"not-an-email\", \"fullName\": \"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.length()").value(3));
-        verify(userService, never()).create(any());
+        verify(userService, never()).createUser(any());
     }
 
     @Test
@@ -155,8 +159,8 @@ class UserControllerWebMvcTest {
     @Test
     void domainExceptionsBecomeProblemDetails() throws Exception {
         UserId missing = UserId.newId();
-        when(userService.get(TenantId.of(TENANT), missing)).thenThrow(new UserNotFoundException(missing));
-        when(userService.create(any())).thenThrow(new EmailAlreadyInUseException());
+        when(userQueries.getUser(TenantId.of(TENANT), missing)).thenThrow(new UserNotFoundException(missing));
+        when(userService.createUser(any())).thenThrow(new EmailAlreadyInUseException());
 
         mvc.perform(get(USERS + "/" + missing).with(admin("user:read")))
                 .andExpect(status().isNotFound())
@@ -171,7 +175,7 @@ class UserControllerWebMvcTest {
     void requiresThePermissionForTheOperation() throws Exception {
         mvc.perform(get(USERS).with(admin("role:read"))).andExpect(status().isForbidden());
         mvc.perform(get(USERS)).andExpect(status().isUnauthorized());
-        verify(userService, never()).list(any(), any(), any());
+        verify(userQueries, never()).list(any(), any(), any());
     }
 
     @Test
@@ -183,7 +187,7 @@ class UserControllerWebMvcTest {
         mvc.perform(get(USERS + "/" + UUID.randomUUID()).with(otherTenant))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.detail").value("Access to this tenant is not allowed"));
-        verify(userService, never()).get(any(), any());
+        verify(userQueries, never()).getUser(any(), any());
     }
 
     private static JwtRequestPostProcessor admin(String... authorities) {
@@ -192,9 +196,8 @@ class UserControllerWebMvcTest {
                 .authorities(Arrays.stream(authorities).<GrantedAuthority>map(SimpleGrantedAuthority::new).toList());
     }
 
-    private static User user(String email) {
-        User user = User.register(TenantId.of(TENANT), Email.of(email), "hash", "User", NOW);
-        user.pullDomainEvents();
-        return user;
+    private static UserView user(String email) {
+        return new UserView(UserId.newId(), TenantId.of(TENANT), Email.of(email), "User", "ACTIVE", true, null, null,
+                NOW, NOW);
     }
 }

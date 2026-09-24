@@ -8,23 +8,20 @@ import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.user.application.port.in.GetUserUseCase;
 import com.codgo.ulock.user.application.port.in.model.UserView;
 import com.codgo.ulock.user.application.port.out.persistence.LoadUserPort;
-import com.codgo.ulock.user.application.port.out.persistence.UserFilter;
-import com.codgo.ulock.user.application.service.mapper.UserViews;
 import com.codgo.ulock.user.domain.exception.UserNotFoundException;
-import java.util.Collection;
-import java.util.List;
+import com.codgo.ulock.user.domain.model.UserStatus;
 import java.util.Optional;
-import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/** Read-only user queries: projections straight from storage, never the aggregate. */
 @Service
 @Transactional(readOnly = true)
-public class GetUserService implements GetUserUseCase {
+public class UserQueryService implements GetUserUseCase {
 
     private final LoadUserPort loadUsers;
 
-    public GetUserService(LoadUserPort loadUsers) {
+    public UserQueryService(LoadUserPort loadUsers) {
         this.loadUsers = loadUsers;
     }
 
@@ -35,25 +32,21 @@ public class GetUserService implements GetUserUseCase {
 
     @Override
     public Optional<UserView> findUser(TenantId tenantId, UserId userId) {
-        return loadUsers.loadUser(tenantId, userId).map(UserViews::from);
+        return loadUsers.findViewById(tenantId, userId);
     }
 
     @Override
     public Optional<UserView> findUserByEmail(TenantId tenantId, String email) {
-        return Email.tryParse(email).flatMap(address -> loadUsers.loadUserByEmail(tenantId, address))
-                .map(UserViews::from);
-    }
-
-    @Override
-    public PageResult<UserView> listUsers(TenantId tenantId, Collection<UserId> userIds, PageQuery page) {
-        if (userIds.isEmpty()) {
-            return new PageResult<>(List.of(), page.page(), page.size(), 0);
-        }
-        return loadUsers.loadUsers(tenantId, UserFilter.byIds(Set.copyOf(userIds)), page).map(UserViews::from);
+        return Email.tryParse(email).flatMap(address -> loadUsers.findViewByEmail(tenantId, address));
     }
 
     @Override
     public boolean hasUsers(TenantId tenantId) {
         return loadUsers.existsInTenant(tenantId);
+    }
+
+    /** @param status null for users of any status */
+    public PageResult<UserView> list(TenantId tenantId, UserStatus status, PageQuery page) {
+        return loadUsers.findViews(tenantId, status, page);
     }
 }

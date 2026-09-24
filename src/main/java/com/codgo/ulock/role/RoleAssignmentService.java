@@ -42,7 +42,7 @@ public class RoleAssignmentService {
         getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
-        if (userRoles.insertIfAbsent(userId, role.getId(), CurrentActor.userId(), clock.instant()) == 0) {
+        if (userRoles.insertIfAbsent(tenantId, userId, role.getId(), CurrentActor.userId(), clock.instant()) == 0) {
             return;
         }
         audit.record(tenantId, AuditAction.ROLE_ASSIGNED, AuditTarget.of(AuditTarget.USER, userId),
@@ -62,11 +62,9 @@ public class RoleAssignmentService {
         getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
-        UserRoleId id = new UserRoleId(userId, roleId);
-        if (!userRoles.existsById(id)) {
+        if (userRoles.delete(tenantId, userId, roleId) == 0) {
             throw new NotFoundException("Role assignment", roleId);
         }
-        userRoles.deleteById(id);
         audit.record(tenantId, AuditAction.ROLE_REVOKED, AuditTarget.of(AuditTarget.USER, userId),
                 Map.of("roleId", roleId.toString(), "roleName", role.getName()));
     }

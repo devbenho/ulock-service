@@ -63,9 +63,6 @@ ulock:
     allow-ephemeral-key: ${ULOCK_JWT_ALLOW_EPHEMERAL_KEY:false}
   security:
     bcrypt-strength: 12
-    max-failed-logins: 5
-    failed-login-window: 15m
-    lock-duration: 15m
     cors-allowed-origins: ${ULOCK_CORS_ALLOWED_ORIGINS:http://localhost:3000}
   bootstrap:
     admin-email: ${ULOCK_BOOTSTRAP_ADMIN_EMAIL:}

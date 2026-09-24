@@ -1,7 +1,6 @@
 package com.codgo.ulock.user.adapter.in.web.dto;
 
-import com.codgo.ulock.user.domain.model.User;
-import com.codgo.ulock.user.domain.model.UserStatus;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -10,14 +9,14 @@ public record UserResponse(
         UUID tenantId,
         String email,
         String fullName,
-        UserStatus status,
+        String status,
         boolean locked,
         Instant lastLoginAt,
         Instant createdAt,
         Instant updatedAt) {
 
-    public static UserResponse from(User user, Instant now) {
+    public static UserResponse from(UserView user, Instant now) {
         return new UserResponse(user.id().value(), user.tenantId().value(), user.email().value(), user.fullName(),
-                user.status(), user.isLocked(now), user.lastLoginAt(), user.createdAt(), user.updatedAt());
+                user.status(), user.lockedAt(now), user.lastLoginAt(), user.createdAt(), user.updatedAt());
     }
 }

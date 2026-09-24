@@ -2,7 +2,6 @@ package com.codgo.ulock.role;
 
 import static com.codgo.ulock.common.web.ValidationPatterns.NOT_BLANK;
 
-import com.codgo.ulock.user.application.port.in.model.UserView;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -31,7 +30,7 @@ public final class RoleDtos {
     public record CreatePermissionRequest(
             @NotBlank
             @Size(max = 100)
-            @Pattern(regexp = "^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)+$",
+            @Pattern(regexp = Permission.CODE_PATTERN,
                     message = "must look like 'resource:action', e.g. invoice:approve")
             String code,
             @Size(max = 500) String description) {}
@@ -64,12 +63,7 @@ public final class RoleDtos {
         }
     }
 
-    public record RoleMemberResponse(UUID userId, String email, String fullName, String status) {
-
-        static RoleMemberResponse from(UserView user) {
-            return new RoleMemberResponse(user.id().value(), user.email().value(), user.fullName(), user.status());
-        }
-    }
+    public record RoleMemberResponse(UUID userId, String email, String fullName, String status) {}
 
     public record RoleSummary(UUID id, String name) {}
 

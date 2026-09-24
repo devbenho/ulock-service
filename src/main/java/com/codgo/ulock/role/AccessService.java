@@ -11,42 +11,40 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Answers what a user may do: permission checks, effective permissions, and access summaries. */
+/**
+ * Answers what a user may do: permission checks, effective permissions and access summaries. All
+ * reads are projections. The database is the source of truth for authorization; the {@code roles}
+ * claim in access tokens is informational and may be stale.
+ */
 @Service
 public class AccessService {
 
-    private final AccessRepository accessRepository;
-    private final UserRoleRepository userRoles;
+    private final RoleQueryRepository queries;
     private final GetUserUseCase getUser;
 
-    AccessService(AccessRepository accessRepository, UserRoleRepository userRoles, GetUserUseCase getUser) {
-        this.accessRepository = accessRepository;
-        this.userRoles = userRoles;
+    AccessService(RoleQueryRepository queries, GetUserUseCase getUser) {
+        this.queries = queries;
         this.getUser = getUser;
     }
 
     /** True only if the user and tenant are ACTIVE and one of the user's roles grants the permission. */
     public boolean hasPermission(UUID tenantId, UUID userId, String permissionCode) {
-        return accessRepository.hasPermission(tenantId, userId, permissionCode);
+        return queries.hasPermission(tenantId, userId, permissionCode);
     }
 
     /** Permission codes currently in effect; empty for inactive users or suspended tenants. */
     public List<String> effectivePermissionCodes(UUID tenantId, UUID userId) {
-        return accessRepository.effectivePermissionCodes(tenantId, userId);
+        return queries.effectivePermissionCodes(tenantId, userId);
     }
 
-    @Transactional(readOnly = true)
-    public List<String> roleNamesOf(UUID userId) {
-        return userRoles.findRolesOfUser(userId).stream().map(Role::getName).toList();
+    public List<String> roleNamesOf(UUID tenantId, UUID userId) {
+        return queries.rolesOfUser(tenantId, userId).stream().map(RoleSummary::name).toList();
     }
 
     @Transactional(readOnly = true)
     public AccessSummaryResponse summarize(UUID tenantId, UUID userId) {
         UserView user = getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
-        List<RoleSummary> roles = userRoles.findRolesOfUser(userId).stream()
-                .map(r -> new RoleSummary(r.getId(), r.getName()))
-                .toList();
-        return new AccessSummaryResponse(userId, user.email().value(), user.status(), roles,
-                effectivePermissionCodes(tenantId, userId));
+        return new AccessSummaryResponse(userId, user.email().value(), user.status(),
+                queries.rolesOfUser(tenantId, userId), queries.effectivePermissionCodes(tenantId, userId));
     }
 }

@@ -16,6 +16,7 @@ import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.user.application.port.in.command.CreateUserCommand;
 import com.codgo.ulock.user.application.port.in.event.UserCredentialsRevokedEvent;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import com.codgo.ulock.user.application.port.out.persistence.LoadUserPort;
 import com.codgo.ulock.user.application.port.out.persistence.SaveUserPort;
 import com.codgo.ulock.user.application.port.out.security.AdministrationPolicyPort;
@@ -24,7 +25,7 @@ import com.codgo.ulock.user.application.service.command.UpdateUserCommand;
 import com.codgo.ulock.user.domain.event.UserCreated;
 import com.codgo.ulock.user.domain.event.UserDeactivated;
 import com.codgo.ulock.user.domain.event.UserPasswordReset;
-import com.codgo.ulock.user.domain.event.UserUpdated;
+import com.codgo.ulock.user.domain.event.UserRenamed;
 import com.codgo.ulock.user.domain.exception.EmailAlreadyInUseException;
 import com.codgo.ulock.user.domain.exception.InvalidPasswordException;
 import com.codgo.ulock.user.domain.exception.UserNotFoundException;
@@ -39,6 +40,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class UserServiceTest {
 
@@ -64,19 +66,22 @@ class UserServiceTest {
 
     @Test
     void createHashesThePasswordSavesAndPublishesUserCreated() {
-        User user = service.create(new CreateUserCommand(TENANT, "Jane@Example.TEST", "Jane", PASSWORD));
+        UserView view = service.createUser(new CreateUserCommand(TENANT, "Jane@Example.TEST", "Jane", PASSWORD));
 
-        assertThat(user.email()).isEqualTo(Email.of("jane@example.test"));
-        assertThat(user.passwordHash()).isEqualTo("hashed:" + PASSWORD);
-        verify(saveUsers).save(user);
-        assertThat(published).containsExactly(new UserCreated(user.id(), TENANT, user.email(), NOW));
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(saveUsers).save(saved.capture());
+        assertThat(saved.getValue().passwordHash()).isEqualTo("hashed:" + PASSWORD);
+        assertThat(view.email()).isEqualTo(Email.of("jane@example.test"));
+        assertThat(view.status()).isEqualTo("ACTIVE");
+        assertThat(view.createdAt()).isEqualTo(NOW);
+        assertThat(published).containsExactly(new UserCreated(view.id(), TENANT, view.email(), NOW));
     }
 
     @Test
     void createRejectsAnEmailAlreadyUsedInTheTenant() {
         when(loadUsers.existsByEmail(TENANT, Email.of("taken@example.test"))).thenReturn(true);
 
-        assertThatThrownBy(() -> service.create(new CreateUserCommand(TENANT, "taken@example.test", "T", PASSWORD)))
+        assertThatThrownBy(() -> service.createUser(new CreateUserCommand(TENANT, "taken@example.test", "T", PASSWORD)))
                 .isInstanceOf(EmailAlreadyInUseException.class);
         verify(saveUsers, never()).save(any());
         assertThat(published).isEmpty();
@@ -84,26 +89,20 @@ class UserServiceTest {
 
     @Test
     void createEnforcesThePasswordPolicyBeforeHashing() {
-        assertThatThrownBy(() -> service.create(new CreateUserCommand(TENANT, "a@b.test", "A", "short")))
+        assertThatThrownBy(() -> service.createUser(new CreateUserCommand(TENANT, "a@b.test", "A", "short")))
                 .isInstanceOf(InvalidPasswordException.class);
         verify(hasher, never()).hash(any());
     }
 
     @Test
-    void createUserReturnsAViewForOtherSlices() {
-        var view = service.createUser(new CreateUserCommand(TENANT, "view@example.test", "View", PASSWORD));
-
-        assertThat(view.status()).isEqualTo("ACTIVE");
-        assertThat(view.active()).isTrue();
-        assertThat(view.tenantId()).isEqualTo(TENANT);
-    }
-
-    @Test
-    void getThrowsNotFoundForUsersOutsideTheTenant() {
+    void commandsOnUsersOutsideTheTenantAreNotFound() {
         UserId id = UserId.newId();
-        when(loadUsers.loadUser(TENANT, id)).thenReturn(Optional.empty());
+        when(loadUsers.findById(TENANT, id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.get(TENANT, id)).isInstanceOf(UserNotFoundException.class);
+        assertThatThrownBy(() -> service.update(new UpdateUserCommand(TENANT, id, "X", null, null)))
+                .isInstanceOf(UserNotFoundException.class);
+        assertThatThrownBy(() -> service.resetPassword(TENANT, id, "a-new-password"))
+                .isInstanceOf(UserNotFoundException.class);
     }
 
     @Test
@@ -111,9 +110,9 @@ class UserServiceTest {
         User user = existingUser();
         UserId admin = UserId.newId();
 
-        User updated = service.update(new UpdateUserCommand(TENANT, user.id(), null, UserStatus.INACTIVE, admin));
+        UserView updated = service.update(new UpdateUserCommand(TENANT, user.id(), null, UserStatus.INACTIVE, admin));
 
-        assertThat(updated.status()).isEqualTo(UserStatus.INACTIVE);
+        assertThat(updated.status()).isEqualTo("INACTIVE");
         verify(administrationPolicy).requireCanAdminister(TENANT, user.id());
         verify(saveUsers).save(user);
         assertThat(published).containsExactly(new UserDeactivated(user.id(), TENANT, NOW),
@@ -138,7 +137,7 @@ class UserServiceTest {
         service.update(new UpdateUserCommand(TENANT, user.id(), "New Name", null, null));
 
         verify(administrationPolicy, never()).requireCanAdminister(any(), any());
-        assertThat(published).containsExactly(new UserUpdated(user.id(), TENANT, "New Name", NOW));
+        assertThat(published).containsExactly(new UserRenamed(user.id(), TENANT, "New Name", NOW));
     }
 
     @Test
@@ -166,7 +165,7 @@ class UserServiceTest {
     private User existingUser() {
         User user = User.register(TENANT, Email.of("existing@example.test"), "hash", "Existing", NOW.minusSeconds(60));
         user.pullDomainEvents();
-        when(loadUsers.loadUser(TENANT, user.id())).thenReturn(Optional.of(user));
+        when(loadUsers.findById(TENANT, user.id())).thenReturn(Optional.of(user));
         return user;
     }
 }

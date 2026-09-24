@@ -1,6 +1,5 @@
 package com.codgo.ulock.role;
 
-import com.codgo.ulock.common.web.PageQueries;
 import com.codgo.ulock.common.web.PageResponse;
 import com.codgo.ulock.role.RoleDtos.CreateRoleRequest;
 import com.codgo.ulock.role.RoleDtos.ReplacePermissionsRequest;
@@ -79,6 +78,6 @@ class RoleController {
     @PreAuthorize("hasAuthority('role:read')")
     PageResponse<RoleMemberResponse> members(@PathVariable UUID tenantId, @PathVariable UUID roleId,
                                              @SortDefault(sort = {"email", "id"}) Pageable pageable) {
-        return PageResponse.of(roleService.members(tenantId, roleId, PageQueries.from(pageable)), Function.identity());
+        return PageResponse.of(roleService.members(tenantId, roleId, pageable), Function.identity());
     }
 }
