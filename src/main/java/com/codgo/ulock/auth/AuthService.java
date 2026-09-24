@@ -13,9 +13,9 @@ import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.tenant.Tenant;
 import com.codgo.ulock.tenant.TenantService;
-import com.codgo.ulock.user.api.AuthenticateUserUseCase;
-import com.codgo.ulock.user.api.GetUserUseCase;
+import com.codgo.ulock.user.api.UserApi;
 import com.codgo.ulock.user.api.UserCredentialsRevokedEvent;
+import com.codgo.ulock.user.api.AuthenticateUserCommand;
 import com.codgo.ulock.user.api.AuthenticationResult;
 import com.codgo.ulock.user.api.UserView;
 import java.time.Clock;
@@ -41,8 +41,7 @@ class AuthService {
     private static final int REFRESH_TOKEN_BYTES = 32;
 
     private final TenantService tenantService;
-    private final AuthenticateUserUseCase authenticateUser;
-    private final GetUserUseCase getUser;
+    private final UserApi users;
     private final PasswordEncoder passwordEncoder;
     private final AccessService accessService;
     private final AccessTokenIssuer accessTokens;
@@ -53,12 +52,11 @@ class AuthService {
     /** Compared against when no tenant matches, so response timing does not reveal whether one exists. */
     private final String dummyPasswordHash;
 
-    AuthService(TenantService tenantService, AuthenticateUserUseCase authenticateUser, GetUserUseCase getUser,
+    AuthService(TenantService tenantService, UserApi users,
                 PasswordEncoder passwordEncoder, AccessService accessService, AccessTokenIssuer accessTokens,
                 RefreshTokenRepository refreshTokens, AuditService audit, JwtProperties jwtProperties, Clock clock) {
         this.tenantService = tenantService;
-        this.authenticateUser = authenticateUser;
-        this.getUser = getUser;
+        this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.accessService = accessService;
         this.accessTokens = accessTokens;
@@ -79,12 +77,12 @@ class AuthService {
         TenantId tenantId = TenantId.of(tenant.get().getId());
         if (!tenant.get().isActive()) {
             passwordEncoder.matches(request.password(), dummyPasswordHash);
-            Optional<UserView> user = getUser.findUserByEmail(tenantId, request.email());
+            Optional<UserView> user = users.findUserByEmail(tenantId, request.email());
             recordLoginFailure(user.orElse(null), tenantId, request.email(),
                     user.isPresent() ? "TENANT_SUSPENDED" : "UNKNOWN_USER");
             throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
-        AuthenticationResult result = authenticateUser.authenticate(tenantId, request.email(), request.password());
+        AuthenticationResult result = users.authenticate(new AuthenticateUserCommand(tenantId, request.email(), request.password()));
         if (!result.authenticated()) {
             recordLoginFailure(result.user(), tenantId, request.email(), result.outcome().name());
             if (result.lockedNow()) {
@@ -117,7 +115,7 @@ class AuthService {
         if (token.isExpired(now)) {
             throw new AuthenticationFailedException(INVALID_REFRESH_TOKEN);
         }
-        boolean sessionStillValid = getUser.findUser(TenantId.of(token.getTenantId()), UserId.of(token.getUserId()))
+        boolean sessionStillValid = users.findUser(TenantId.of(token.getTenantId()), UserId.of(token.getUserId()))
                 .filter(UserView::active)
                 .filter(u -> tenantService.get(token.getTenantId()).isActive())
                 .isPresent();

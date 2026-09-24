@@ -12,8 +12,8 @@ import com.codgo.ulock.role.TenantRoleProvisioner;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.tenant.TenantDtos.CreateTenantRequest;
 import com.codgo.ulock.tenant.TenantDtos.UpdateTenantRequest;
-import com.codgo.ulock.user.api.CreateUserUseCase;
 import com.codgo.ulock.user.api.CreateUserCommand;
+import com.codgo.ulock.user.api.UserApi;
 import com.codgo.ulock.user.api.UserView;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,15 +29,15 @@ public class TenantService {
 
     private final TenantRepository tenants;
     private final TenantRoleProvisioner roleProvisioner;
-    private final CreateUserUseCase createUser;
+    private final UserApi users;
     private final RoleAssignmentService roleAssignments;
     private final AuditService audit;
 
-    TenantService(TenantRepository tenants, TenantRoleProvisioner roleProvisioner, CreateUserUseCase createUser,
+    TenantService(TenantRepository tenants, TenantRoleProvisioner roleProvisioner, UserApi users,
                   RoleAssignmentService roleAssignments, AuditService audit) {
         this.tenants = tenants;
         this.roleProvisioner = roleProvisioner;
-        this.createUser = createUser;
+        this.users = users;
         this.roleAssignments = roleAssignments;
         this.audit = audit;
     }
@@ -53,7 +53,7 @@ public class TenantService {
                 Map.of("name", tenant.getName(), "slug", tenant.getSlug()));
         roleProvisioner.provision(tenant.getId());
         var admin = request.admin();
-        UserView adminUser = createUser.createUser(new CreateUserCommand(
+        UserView adminUser = users.createUser(new CreateUserCommand(
                 TenantId.of(tenant.getId()), admin.email(), admin.fullName(), admin.password()));
         roleAssignments.assignReserved(tenant.getId(), adminUser.id().value(), ReservedRole.TENANT_ADMIN);
         return tenant;

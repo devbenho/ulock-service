@@ -4,7 +4,7 @@ import com.codgo.ulock.role.RoleDtos.AccessSummaryResponse;
 import com.codgo.ulock.role.RoleDtos.RoleSummary;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
-import com.codgo.ulock.user.api.GetUserUseCase;
+import com.codgo.ulock.user.api.UserApi;
 import com.codgo.ulock.user.api.UserView;
 import java.util.List;
 import java.util.UUID;
@@ -20,11 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class AccessService {
 
     private final RoleQueryRepository queries;
-    private final GetUserUseCase getUser;
+    private final UserApi users;
 
-    AccessService(RoleQueryRepository queries, GetUserUseCase getUser) {
+    AccessService(RoleQueryRepository queries, UserApi users) {
         this.queries = queries;
-        this.getUser = getUser;
+        this.users = users;
     }
 
     /** True only if the user and tenant are ACTIVE and one of the user's roles grants the permission. */
@@ -43,7 +43,7 @@ public class AccessService {
 
     @Transactional(readOnly = true)
     public AccessSummaryResponse summarize(UUID tenantId, UUID userId) {
-        UserView user = getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
+        UserView user = users.getUser(TenantId.of(tenantId), UserId.of(userId));
         return new AccessSummaryResponse(userId, user.email().value(), user.status(),
                 queries.rolesOfUser(tenantId, userId), queries.effectivePermissionCodes(tenantId, userId));
     }

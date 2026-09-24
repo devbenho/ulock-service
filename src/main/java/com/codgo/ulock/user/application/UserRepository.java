@@ -15,7 +15,7 @@ import java.util.Optional;
  * Commands load the {@link User} aggregate. Queries read {@link UserView} projections and never
  * hydrate the aggregate.
  */
-public interface LoadUserPort {
+public interface UserRepository {
 
     // --- for commands -----------------------------------------------------------------------
 
@@ -25,6 +25,9 @@ public interface LoadUserPort {
     Optional<User> findByEmailForUpdate(TenantId tenantId, Email email);
 
     boolean existsByEmail(TenantId tenantId, Email email);
+
+    /** Inserts or updates the user. */
+    void save(User user);
 
     // --- for queries ------------------------------------------------------------------------
 

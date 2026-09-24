@@ -5,8 +5,7 @@ import com.codgo.ulock.role.ReservedRole;
 import com.codgo.ulock.role.RoleAssignmentService;
 import com.codgo.ulock.sharedkernel.exception.DomainException;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
-import com.codgo.ulock.user.api.CreateUserUseCase;
-import com.codgo.ulock.user.api.GetUserUseCase;
+import com.codgo.ulock.user.api.UserApi;
 import com.codgo.ulock.user.api.CreateUserCommand;
 import com.codgo.ulock.user.api.UserView;
 import org.slf4j.Logger;
@@ -29,23 +28,21 @@ class PlatformAdminBootstrap implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(PlatformAdminBootstrap.class);
 
     private final BootstrapProperties properties;
-    private final GetUserUseCase getUser;
-    private final CreateUserUseCase createUser;
+    private final UserApi users;
     private final RoleAssignmentService roleAssignments;
     private final TransactionTemplate transaction;
 
-    PlatformAdminBootstrap(BootstrapProperties properties, GetUserUseCase getUser, CreateUserUseCase createUser,
+    PlatformAdminBootstrap(BootstrapProperties properties, UserApi users,
                            RoleAssignmentService roleAssignments, PlatformTransactionManager transactionManager) {
         this.properties = properties;
-        this.getUser = getUser;
-        this.createUser = createUser;
+        this.users = users;
         this.roleAssignments = roleAssignments;
         this.transaction = new TransactionTemplate(transactionManager);
     }
 
     @Override
     public void run(ApplicationArguments args) {
-        if (getUser.hasUsers(TenantId.of(PlatformTenant.ID))) {
+        if (users.hasUsers(TenantId.of(PlatformTenant.ID))) {
             return;
         }
         if (!StringUtils.hasText(properties.adminEmail()) || !StringUtils.hasText(properties.adminPassword())) {
@@ -55,7 +52,7 @@ class PlatformAdminBootstrap implements ApplicationRunner {
         }
         try {
             transaction.executeWithoutResult(status -> {
-                UserView admin = createUser.createUser(new CreateUserCommand(TenantId.of(PlatformTenant.ID),
+                UserView admin = users.createUser(new CreateUserCommand(TenantId.of(PlatformTenant.ID),
                         properties.adminEmail(), properties.adminFullName(), properties.adminPassword()));
                 roleAssignments.assignReserved(PlatformTenant.ID, admin.id().value(), ReservedRole.PLATFORM_ADMIN);
             });

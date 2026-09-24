@@ -22,8 +22,8 @@ import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.tenant.Tenant;
 import com.codgo.ulock.tenant.TenantService;
-import com.codgo.ulock.user.api.AuthenticateUserUseCase;
-import com.codgo.ulock.user.api.GetUserUseCase;
+import com.codgo.ulock.user.api.AuthenticateUserCommand;
+import com.codgo.ulock.user.api.UserApi;
 import com.codgo.ulock.user.api.AuthenticationResult.Outcome;
 import com.codgo.ulock.user.api.AuthenticationResult;
 import com.codgo.ulock.user.api.UserView;
@@ -44,8 +44,7 @@ class AuthServiceTest {
     private static final Instant NOW = Instant.parse("2026-09-23T10:00:00Z");
 
     private final TenantService tenantService = mock(TenantService.class);
-    private final AuthenticateUserUseCase authenticateUser = mock(AuthenticateUserUseCase.class);
-    private final GetUserUseCase getUser = mock(GetUserUseCase.class);
+    private final UserApi users = mock(UserApi.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final AccessService accessService = mock(AccessService.class);
     private final AccessTokenIssuer accessTokens = mock(AccessTokenIssuer.class);
@@ -60,7 +59,7 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         when(passwordEncoder.encode(anyString())).thenReturn("dummy-hash");
-        service = new AuthService(tenantService, authenticateUser, getUser, passwordEncoder, accessService,
+        service = new AuthService(tenantService, users, passwordEncoder, accessService,
                 accessTokens, refreshTokens, audit,
                 new JwtProperties("iss", Duration.ofMinutes(15), Duration.ofDays(7), "kid", "", false),
                 Clock.fixed(NOW, ZoneOffset.UTC));
@@ -74,7 +73,7 @@ class AuthServiceTest {
     @Test
     void theFailureThatLocksTheAccountIsAuditedAsAccountLocked() {
         Instant lockedUntil = NOW.plus(Duration.ofMinutes(15));
-        when(authenticateUser.authenticate(TenantId.of(tenantId), "u@acme.test", "bad"))
+        when(users.authenticate(new AuthenticateUserCommand(TenantId.of(tenantId), "u@acme.test", "bad")))
                 .thenReturn(new AuthenticationResult(Outcome.BAD_PASSWORD, user, lockedUntil));
 
         assertThatThrownBy(() -> service.login(new LoginRequest("acme", "u@acme.test", "bad")))
@@ -89,7 +88,7 @@ class AuthServiceTest {
 
     @Test
     void unknownUsersAreAuditedWithTheAttemptedEmailAndNoActor() {
-        when(authenticateUser.authenticate(any(), any(), any()))
+        when(users.authenticate(any()))
                 .thenReturn(new AuthenticationResult(Outcome.UNKNOWN_USER, null, null));
 
         assertThatThrownBy(() -> service.login(new LoginRequest("acme", "ghost@acme.test", "pw")))
@@ -107,25 +106,25 @@ class AuthServiceTest {
                 .isInstanceOf(AuthenticationFailedException.class)
                 .hasMessageContaining("Invalid credentials");
         verify(passwordEncoder).matches("pw", "dummy-hash");
-        verifyNoInteractions(audit, authenticateUser);
+        verifyNoInteractions(audit, users);
     }
 
     @Test
     void suspendedTenantsRejectLoginWithoutCheckingThePassword() {
         when(tenant.isActive()).thenReturn(false);
-        when(getUser.findUserByEmail(TenantId.of(tenantId), "u@acme.test")).thenReturn(Optional.of(user));
+        when(users.findUserByEmail(TenantId.of(tenantId), "u@acme.test")).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> service.login(new LoginRequest("acme", "u@acme.test", "right")))
                 .isInstanceOf(AuthenticationFailedException.class);
 
-        verify(authenticateUser, never()).authenticate(any(), any(), any());
+        verify(users, never()).authenticate(any());
         verify(audit).recordAs(eq(user.id().value()), eq(tenantId), eq(AuditAction.LOGIN_FAILED), any(),
                 eq(Map.of("email", "u@acme.test", "reason", "TENANT_SUSPENDED")));
     }
 
     @Test
     void successfulLoginIssuesBothTokens() {
-        when(authenticateUser.authenticate(TenantId.of(tenantId), "u@acme.test", "right"))
+        when(users.authenticate(new AuthenticateUserCommand(TenantId.of(tenantId), "u@acme.test", "right")))
                 .thenReturn(new AuthenticationResult(Outcome.AUTHENTICATED, user, null));
         when(accessService.roleNamesOf(tenantId, user.id().value())).thenReturn(List.of("TENANT_ADMIN"));
         when(accessTokens.forUser(user.id().value(), tenantId, List.of("TENANT_ADMIN"))).thenReturn("jwt");
@@ -142,7 +141,7 @@ class AuthServiceTest {
     void refreshIsRefusedOnceTheUserIsInactive() {
         RefreshToken token = new RefreshToken(user.id().value(), tenantId, "h", NOW, NOW.plusSeconds(60), null);
         when(refreshTokens.findByTokenHashForUpdate(SecureTokens.sha256("raw"))).thenReturn(Optional.of(token));
-        when(getUser.findUser(TenantId.of(tenantId), user.id()))
+        when(users.findUser(TenantId.of(tenantId), user.id()))
                 .thenReturn(Optional.of(view("INACTIVE")));
 
         assertThatThrownBy(() -> service.refresh("raw")).isInstanceOf(AuthenticationFailedException.class);
