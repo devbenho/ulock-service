@@ -7,7 +7,7 @@ import com.codgo.ulock.common.error.NotFoundException;
 import com.codgo.ulock.common.security.CurrentActor;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
-import com.codgo.ulock.user.api.GetUserUseCase;
+import com.codgo.ulock.user.api.UserApi;
 import java.time.Clock;
 import java.util.Map;
 import java.util.UUID;
@@ -20,17 +20,17 @@ public class RoleAssignmentService {
     private final UserRoleRepository userRoles;
     private final RoleService roleService;
     private final RoleRepository roles;
-    private final GetUserUseCase getUser;
+    private final UserApi users;
     private final AuditService audit;
     private final PrivilegeGuard privilegeGuard;
     private final Clock clock;
 
     RoleAssignmentService(UserRoleRepository userRoles, RoleService roleService, RoleRepository roles,
-                          GetUserUseCase getUser, AuditService audit, PrivilegeGuard privilegeGuard, Clock clock) {
+                          UserApi users, AuditService audit, PrivilegeGuard privilegeGuard, Clock clock) {
         this.userRoles = userRoles;
         this.roleService = roleService;
         this.roles = roles;
-        this.getUser = getUser;
+        this.users = users;
         this.audit = audit;
         this.privilegeGuard = privilegeGuard;
         this.clock = clock;
@@ -39,7 +39,7 @@ public class RoleAssignmentService {
     /** Idempotent: assigning a role the user already holds changes nothing. */
     @Transactional
     public void assign(UUID tenantId, UUID userId, UUID roleId) {
-        getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
+        users.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
         if (userRoles.insertIfAbsent(tenantId, userId, role.getId(), CurrentActor.userId(), clock.instant()) == 0) {
@@ -59,7 +59,7 @@ public class RoleAssignmentService {
 
     @Transactional
     public void revoke(UUID tenantId, UUID userId, UUID roleId) {
-        getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
+        users.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
         if (userRoles.delete(tenantId, userId, roleId) == 0) {

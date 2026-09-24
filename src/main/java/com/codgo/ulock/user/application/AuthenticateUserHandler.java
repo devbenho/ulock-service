@@ -1,14 +1,9 @@
 package com.codgo.ulock.user.application;
 
 import com.codgo.ulock.sharedkernel.valueobject.Email;
-import com.codgo.ulock.sharedkernel.valueobject.TenantId;
-import com.codgo.ulock.user.api.AuthenticateUserUseCase;
-import com.codgo.ulock.user.api.AuthenticationResult.Outcome;
+import com.codgo.ulock.user.api.AuthenticateUserCommand;
 import com.codgo.ulock.user.api.AuthenticationResult;
-import com.codgo.ulock.user.application.LoadUserPort;
-import com.codgo.ulock.user.application.SaveUserPort;
-import com.codgo.ulock.user.application.PasswordHasherPort;
-import com.codgo.ulock.user.application.UserViews;
+import com.codgo.ulock.user.api.AuthenticationResult.Outcome;
 import com.codgo.ulock.user.domain.LoginAttempt;
 import com.codgo.ulock.user.domain.User;
 import java.time.Clock;
@@ -22,40 +17,37 @@ import org.springframework.transaction.annotation.Transactional;
  * not reveal whether the account exists or why the attempt failed.
  */
 @Service
-public class AuthenticateUserService implements AuthenticateUserUseCase {
+public class AuthenticateUserHandler {
 
-    private final LoadUserPort loadUsers;
-    private final SaveUserPort saveUsers;
-    private final PasswordHasherPort passwordHasher;
+    private final UserRepository users;
+    private final PasswordHasher passwordHasher;
     private final Clock clock;
 
-    public AuthenticateUserService(LoadUserPort loadUsers, SaveUserPort saveUsers, PasswordHasherPort passwordHasher,
-                                   Clock clock) {
-        this.loadUsers = loadUsers;
-        this.saveUsers = saveUsers;
+    AuthenticateUserHandler(UserRepository users, PasswordHasher passwordHasher, Clock clock) {
+        this.users = users;
         this.passwordHasher = passwordHasher;
         this.clock = clock;
     }
 
-    @Override
     @Transactional
-    public AuthenticationResult authenticate(TenantId tenantId, String email, String password) {
-        Optional<User> candidate = Email.tryParse(email).flatMap(address -> loadUsers.findByEmailForUpdate(tenantId, address));
+    public AuthenticationResult handle(AuthenticateUserCommand command) {
+        Optional<User> candidate = Email.tryParse(command.email())
+                .flatMap(address -> users.findByEmailForUpdate(command.tenantId(), address));
         if (candidate.isEmpty()) {
-            passwordHasher.simulateMatch(password);
+            passwordHasher.simulateMatch(command.password());
             return new AuthenticationResult(Outcome.UNKNOWN_USER, null, null);
         }
         User user = candidate.get();
         Instant now = clock.instant();
         boolean matched;
         if (user.canAttemptLogin(now)) {
-            matched = passwordHasher.matches(password, user.passwordHash());
+            matched = passwordHasher.matches(command.password(), user.passwordHash());
         } else {
-            passwordHasher.simulateMatch(password);
+            passwordHasher.simulateMatch(command.password());
             matched = false;
         }
         LoginAttempt attempt = user.recordLoginAttempt(matched, now);
-        saveUsers.save(user);
+        users.save(user);
         return new AuthenticationResult(outcomeOf(attempt), UserViews.from(user),
                 attempt.lockedNow() ? user.lockedUntil() : null);
     }

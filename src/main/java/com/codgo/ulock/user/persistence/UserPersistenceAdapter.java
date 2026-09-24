@@ -8,8 +8,7 @@ import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.user.persistence.UserJpaEntity;
 import com.codgo.ulock.user.persistence.UserJpaRepository;
 import com.codgo.ulock.user.api.UserView;
-import com.codgo.ulock.user.application.LoadUserPort;
-import com.codgo.ulock.user.application.SaveUserPort;
+import com.codgo.ulock.user.application.UserRepository;
 import com.codgo.ulock.user.domain.User;
 import com.codgo.ulock.user.domain.UserStatus;
 import java.util.Optional;
@@ -20,7 +19,7 @@ import org.springframework.stereotype.Component;
 
 /** Maps between the {@code users} row and the domain by hand: one entity, one aggregate, no in-between model. */
 @Component
-class UserPersistenceAdapter implements LoadUserPort, SaveUserPort {
+class UserPersistenceAdapter implements UserRepository {
 
     private final UserJpaRepository repository;
 

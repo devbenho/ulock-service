@@ -1,6 +1,6 @@
 package com.codgo.ulock.user.application;
 
-public interface PasswordHasherPort {
+public interface PasswordHasher {
 
     String hash(String rawPassword);
 

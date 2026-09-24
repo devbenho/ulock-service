@@ -103,10 +103,14 @@ discovered automatically. Keep it green. Never weaken a rule to make a change pa
 
 ## Commands, queries and authorization
 
-- **Commands** load the aggregate through a tenant-scoped port, call its methods, save it and publish
-  its events.
+- **Commands** are a record plus a handler that loads the aggregate through a tenant-scoped repository,
+  calls its methods, saves it and publishes its events. One handler per command: `CreateUserHandler`,
+  `UpdateUserHandler`, `ResetPasswordHandler`, `AuthenticateUserHandler`.
+- **There is no Validator class.** Shape and format are `jakarta.validation` annotations on the request
+  records in `web/`; commands stay plain records, because `application/` may not use validation
+  annotations. Business rules live in the domain and the handler.
 - **Queries** never hydrate an aggregate. Lists, gets, access summaries, role members and audit searches
-  read projections or DTOs straight from storage. Examples: `LoadUserPort.findView*`,
+  read projections or DTOs straight from storage. Examples: `UserRepository.findView*` through `UserQueries`,
   `RoleQueryRepository`, the audit `Specification` search. There is no CQRS infrastructure beyond this.
 - **Read-side SQL may join across slices.** For example, role members and `/authz/check` join `users`
   and `tenants`. Writes always go through the owning slice.
@@ -149,9 +153,10 @@ discovered automatically. Keep it green. Never weaken a rule to make a change pa
   `TenantId`, and every query filters by it. `@TenantId` fixes the tenant per session, which breaks tenant
   creation (a platform admin writes into the new tenant), login (anonymous, tenant comes from the slug) and
   bootstrap. The persistence adapter test covers isolation between tenants.
-- **Three inbound ports on user.** `GetUserUseCase`, `CreateUserUseCase` (used by tenant creation and
-  bootstrap) and `AuthenticateUserUseCase` (used by login). The password check and the lockout rules live in
-  the user domain.
+- **One inbound interface on user.** `UserApi` in `user/api`, implemented by `UserFacade`, which delegates
+  to the handlers. It carries only what other slices call: create (tenant creation and bootstrap), the user
+  lookups (role assignment, access summaries, refresh) and authenticate (login). The password check and the
+  lockout rules live in the user domain.
 - **One shared event port.** `DomainEventPublisherPort` sits in the shared kernel, so `common` implements
   a single port instead of depending on every slice.
 - **Simplified after the pilot.**

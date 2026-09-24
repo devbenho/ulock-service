@@ -1,13 +1,13 @@
 package com.codgo.ulock.user.infra;
 
-import com.codgo.ulock.user.application.PasswordHasherPort;
+import com.codgo.ulock.user.application.PasswordHasher;
 import java.util.UUID;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /** Hashes with the application's BCrypt {@link PasswordEncoder} (cost from {@code ulock.security.bcrypt-strength}). */
 @Component
-class BCryptPasswordHasherAdapter implements PasswordHasherPort {
+class BCryptPasswordHasherAdapter implements PasswordHasher {
 
     private final PasswordEncoder encoder;
     private final String dummyHash;

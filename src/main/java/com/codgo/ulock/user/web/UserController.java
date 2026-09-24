@@ -11,9 +11,12 @@ import com.codgo.ulock.user.web.UpdateUserRequest;
 import com.codgo.ulock.user.web.UserResponse;
 import com.codgo.ulock.user.api.CreateUserCommand;
 import com.codgo.ulock.user.api.UserView;
-import com.codgo.ulock.user.application.UserQueryService;
-import com.codgo.ulock.user.application.UserService;
+import com.codgo.ulock.user.application.CreateUserHandler;
+import com.codgo.ulock.user.application.ResetPasswordCommand;
+import com.codgo.ulock.user.application.ResetPasswordHandler;
 import com.codgo.ulock.user.application.UpdateUserCommand;
+import com.codgo.ulock.user.application.UpdateUserHandler;
+import com.codgo.ulock.user.application.UserQueries;
 import com.codgo.ulock.user.domain.UserStatus;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -32,17 +35,22 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Writes go to {@link UserService}, reads to {@link UserQueryService}. */
+/** Each write goes to its own handler; reads go to {@link UserQueries}. */
 @RestController
 @RequestMapping("/api/v1/tenants/{tenantId}/users")
 class UserController {
 
-    private final UserService userService;
-    private final UserQueryService userQueries;
+    private final CreateUserHandler createUser;
+    private final UpdateUserHandler updateUser;
+    private final ResetPasswordHandler resetPassword;
+    private final UserQueries userQueries;
     private final Clock clock;
 
-    UserController(UserService userService, UserQueryService userQueries, Clock clock) {
-        this.userService = userService;
+    UserController(CreateUserHandler createUser, UpdateUserHandler updateUser, ResetPasswordHandler resetPassword,
+                   UserQueries userQueries, Clock clock) {
+        this.createUser = createUser;
+        this.updateUser = updateUser;
+        this.resetPassword = resetPassword;
         this.userQueries = userQueries;
         this.clock = clock;
     }
@@ -50,7 +58,7 @@ class UserController {
     @PostMapping
     @PreAuthorize("hasAuthority('user:write')")
     ResponseEntity<UserResponse> create(@PathVariable UUID tenantId, @Valid @RequestBody CreateUserRequest request) {
-        UserView user = userService.createUser(
+        UserView user = createUser.handle(
                 new CreateUserCommand(TenantId.of(tenantId), request.email(), request.fullName(), request.password()));
         return ResponseEntity.created(URI.create("/api/v1/tenants/" + tenantId + "/users/" + user.id()))
                 .body(toResponse(user));
@@ -76,7 +84,7 @@ class UserController {
     UserResponse update(@PathVariable UUID tenantId, @PathVariable UUID userId,
                         @Valid @RequestBody UpdateUserRequest request) {
         UUID actor = CurrentActor.userId();
-        return toResponse(userService.update(new UpdateUserCommand(TenantId.of(tenantId), UserId.of(userId),
+        return toResponse(updateUser.handle(new UpdateUserCommand(TenantId.of(tenantId), UserId.of(userId),
                 request.fullName(), request.status(), actor == null ? null : UserId.of(actor))));
     }
 
@@ -84,7 +92,7 @@ class UserController {
     @PreAuthorize("hasAuthority('user:write')")
     ResponseEntity<Void> resetPassword(@PathVariable UUID tenantId, @PathVariable UUID userId,
                                        @Valid @RequestBody ResetPasswordRequest request) {
-        userService.resetPassword(TenantId.of(tenantId), UserId.of(userId), request.newPassword());
+        resetPassword.handle(new ResetPasswordCommand(TenantId.of(tenantId), UserId.of(userId), request.newPassword()));
         return ResponseEntity.noContent().build();
     }
 

@@ -26,8 +26,10 @@ import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.user.api.CreateUserCommand;
 import com.codgo.ulock.user.api.UserView;
-import com.codgo.ulock.user.application.UserQueryService;
-import com.codgo.ulock.user.application.UserService;
+import com.codgo.ulock.user.application.UserQueries;
+import com.codgo.ulock.user.application.CreateUserHandler;
+import com.codgo.ulock.user.application.ResetPasswordHandler;
+import com.codgo.ulock.user.application.UpdateUserHandler;
 import com.codgo.ulock.user.application.UpdateUserCommand;
 import com.codgo.ulock.user.domain.EmailAlreadyInUseException;
 import com.codgo.ulock.user.domain.UserNotFoundException;
@@ -94,10 +96,16 @@ class UserControllerWebMvcTest {
     MockMvc mvc;
 
     @MockitoBean
-    UserService userService;
+    CreateUserHandler createUser;
 
     @MockitoBean
-    UserQueryService userQueries;
+    UpdateUserHandler updateUser;
+
+    @MockitoBean
+    ResetPasswordHandler resetPassword;
+
+    @MockitoBean
+    UserQueries userQueries;
 
     @MockitoBean
     JwtDecoder jwtDecoder;
@@ -123,7 +131,7 @@ class UserControllerWebMvcTest {
     @Test
     void createsAUserAndReturnsItsLocation() throws Exception {
         UserView user = user("new@example.test");
-        when(userService.createUser(new CreateUserCommand(TenantId.of(TENANT), "new@example.test", "New", "long-password")))
+        when(createUser.handle(new CreateUserCommand(TenantId.of(TENANT), "new@example.test", "New", "long-password")))
                 .thenReturn(user);
 
         mvc.perform(post(USERS).with(admin("user:write")).contentType(MediaType.APPLICATION_JSON)
@@ -140,19 +148,19 @@ class UserControllerWebMvcTest {
                         .content("{\"email\": \"not-an-email\", \"fullName\": \"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.length()").value(3));
-        verify(userService, never()).createUser(any());
+        verify(createUser, never()).handle(any());
     }
 
     @Test
     void passesTheCallerAsActorWhenUpdating() throws Exception {
         UserId target = UserId.newId();
-        when(userService.update(any())).thenReturn(user("t@example.test"));
+        when(updateUser.handle(any())).thenReturn(user("t@example.test"));
 
         mvc.perform(patch(USERS + "/" + target).with(admin("user:write")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\": \"INACTIVE\"}"))
                 .andExpect(status().isOk());
 
-        verify(userService).update(new UpdateUserCommand(TenantId.of(TENANT), target, null, UserStatus.INACTIVE,
+        verify(updateUser).handle(new UpdateUserCommand(TenantId.of(TENANT), target, null, UserStatus.INACTIVE,
                 UserId.of(ADMIN)));
     }
 
@@ -160,7 +168,7 @@ class UserControllerWebMvcTest {
     void domainExceptionsBecomeProblemDetails() throws Exception {
         UserId missing = UserId.newId();
         when(userQueries.getUser(TenantId.of(TENANT), missing)).thenThrow(new UserNotFoundException(missing));
-        when(userService.createUser(any())).thenThrow(new EmailAlreadyInUseException());
+        when(createUser.handle(any())).thenThrow(new EmailAlreadyInUseException());
 
         mvc.perform(get(USERS + "/" + missing).with(admin("user:read")))
                 .andExpect(status().isNotFound())
