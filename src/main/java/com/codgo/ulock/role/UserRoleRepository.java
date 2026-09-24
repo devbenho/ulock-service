@@ -1,11 +1,8 @@
 package com.codgo.ulock.role;
 
-import com.codgo.ulock.user.User;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -27,7 +24,6 @@ interface UserRoleRepository extends JpaRepository<UserRole, UserRoleId> {
             + " order by r.name")
     List<Role> findRolesOfUser(UUID userId);
 
-    @Query(value = "select u from User u where u.id in (select ur.id.userId from UserRole ur where ur.id.roleId = :roleId)",
-            countQuery = "select count(ur) from UserRole ur where ur.id.roleId = :roleId")
-    Page<User> findMembersOfRole(UUID roleId, Pageable pageable);
+    @Query("select ur.id.userId from UserRole ur where ur.id.roleId = :roleId")
+    List<UUID> findMemberIds(UUID roleId);
 }

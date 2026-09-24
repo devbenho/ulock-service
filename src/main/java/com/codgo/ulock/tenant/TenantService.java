@@ -6,14 +6,15 @@ import com.codgo.ulock.audit.AuditTarget;
 import com.codgo.ulock.common.PlatformTenant;
 import com.codgo.ulock.common.error.ConflictException;
 import com.codgo.ulock.common.error.NotFoundException;
-import com.codgo.ulock.role.RoleAssignmentService;
 import com.codgo.ulock.role.ReservedRole;
+import com.codgo.ulock.role.RoleAssignmentService;
 import com.codgo.ulock.role.TenantRoleProvisioner;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.tenant.TenantDtos.CreateTenantRequest;
 import com.codgo.ulock.tenant.TenantDtos.UpdateTenantRequest;
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserDtos.CreateUserRequest;
-import com.codgo.ulock.user.UserService;
+import com.codgo.ulock.user.application.port.in.CreateUserUseCase;
+import com.codgo.ulock.user.application.port.in.command.CreateUserCommand;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -28,15 +29,15 @@ public class TenantService {
 
     private final TenantRepository tenants;
     private final TenantRoleProvisioner roleProvisioner;
-    private final UserService userService;
+    private final CreateUserUseCase createUser;
     private final RoleAssignmentService roleAssignments;
     private final AuditService audit;
 
-    TenantService(TenantRepository tenants, TenantRoleProvisioner roleProvisioner, UserService userService,
+    TenantService(TenantRepository tenants, TenantRoleProvisioner roleProvisioner, CreateUserUseCase createUser,
                   RoleAssignmentService roleAssignments, AuditService audit) {
         this.tenants = tenants;
         this.roleProvisioner = roleProvisioner;
-        this.userService = userService;
+        this.createUser = createUser;
         this.roleAssignments = roleAssignments;
         this.audit = audit;
     }
@@ -52,9 +53,9 @@ public class TenantService {
                 Map.of("name", tenant.getName(), "slug", tenant.getSlug()));
         roleProvisioner.provision(tenant.getId());
         var admin = request.admin();
-        User adminUser = userService.create(tenant.getId(),
-                new CreateUserRequest(admin.email(), admin.fullName(), admin.password()));
-        roleAssignments.assignReserved(tenant.getId(), adminUser.getId(), ReservedRole.TENANT_ADMIN);
+        UserView adminUser = createUser.createUser(new CreateUserCommand(
+                TenantId.of(tenant.getId()), admin.email(), admin.fullName(), admin.password()));
+        roleAssignments.assignReserved(tenant.getId(), adminUser.id().value(), ReservedRole.TENANT_ADMIN);
         return tenant;
     }
 

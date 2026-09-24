@@ -5,8 +5,9 @@ import com.codgo.ulock.audit.AuditService;
 import com.codgo.ulock.audit.AuditTarget;
 import com.codgo.ulock.common.error.NotFoundException;
 import com.codgo.ulock.common.security.CurrentActor;
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserService;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
+import com.codgo.ulock.sharedkernel.valueobject.UserId;
+import com.codgo.ulock.user.application.port.in.GetUserUseCase;
 import java.time.Clock;
 import java.util.Map;
 import java.util.UUID;
@@ -19,17 +20,17 @@ public class RoleAssignmentService {
     private final UserRoleRepository userRoles;
     private final RoleService roleService;
     private final RoleRepository roles;
-    private final UserService userService;
+    private final GetUserUseCase getUser;
     private final AuditService audit;
     private final PrivilegeGuard privilegeGuard;
     private final Clock clock;
 
     RoleAssignmentService(UserRoleRepository userRoles, RoleService roleService, RoleRepository roles,
-                          UserService userService, AuditService audit, PrivilegeGuard privilegeGuard, Clock clock) {
+                          GetUserUseCase getUser, AuditService audit, PrivilegeGuard privilegeGuard, Clock clock) {
         this.userRoles = userRoles;
         this.roleService = roleService;
         this.roles = roles;
-        this.userService = userService;
+        this.getUser = getUser;
         this.audit = audit;
         this.privilegeGuard = privilegeGuard;
         this.clock = clock;
@@ -38,10 +39,10 @@ public class RoleAssignmentService {
     /** Idempotent: assigning a role the user already holds changes nothing. */
     @Transactional
     public void assign(UUID tenantId, UUID userId, UUID roleId) {
-        User user = userService.get(tenantId, userId);
+        getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
-        if (userRoles.insertIfAbsent(user.getId(), role.getId(), CurrentActor.userId(), clock.instant()) == 0) {
+        if (userRoles.insertIfAbsent(userId, role.getId(), CurrentActor.userId(), clock.instant()) == 0) {
             return;
         }
         audit.record(tenantId, AuditAction.ROLE_ASSIGNED, AuditTarget.of(AuditTarget.USER, userId),
@@ -58,7 +59,7 @@ public class RoleAssignmentService {
 
     @Transactional
     public void revoke(UUID tenantId, UUID userId, UUID roleId) {
-        userService.get(tenantId, userId);
+        getUser.getUser(TenantId.of(tenantId), UserId.of(userId));
         Role role = roleService.find(tenantId, roleId);
         privilegeGuard.requireCanGrant(role.getPermissions());
         UserRoleId id = new UserRoleId(userId, roleId);

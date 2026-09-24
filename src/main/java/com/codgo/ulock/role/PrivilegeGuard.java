@@ -2,7 +2,6 @@ package com.codgo.ulock.role;
 
 import com.codgo.ulock.common.error.ForbiddenException;
 import com.codgo.ulock.common.security.CurrentActor;
-import com.codgo.ulock.user.UserAdministrationPolicy;
 import java.util.Collection;
 import java.util.Set;
 import java.util.UUID;
@@ -16,7 +15,7 @@ import org.springframework.stereotype.Component;
  * Tenant-defined permissions are business permissions and are not restricted this way.
  */
 @Component
-class PrivilegeGuard implements UserAdministrationPolicy {
+public class PrivilegeGuard {
 
     private final UserRoleRepository userRoles;
 
@@ -28,7 +27,7 @@ class PrivilegeGuard implements UserAdministrationPolicy {
         requireHeld(systemCodes(permissions), "You cannot grant or revoke permissions you do not hold");
     }
 
-    @Override
+    /** The user slice calls this before deactivating a user or resetting their password. */
     public void requireCanAdminister(UUID tenantId, UUID userId) {
         Set<String> targetPermissions = systemCodes(userRoles.findRolesOfUser(userId).stream()
                 .flatMap(role -> role.getPermissions().stream())

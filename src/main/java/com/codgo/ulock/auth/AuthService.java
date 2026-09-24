@@ -7,14 +7,17 @@ import com.codgo.ulock.auth.AuthDtos.LoginRequest;
 import com.codgo.ulock.auth.AuthDtos.TokenResponse;
 import com.codgo.ulock.common.error.AuthenticationFailedException;
 import com.codgo.ulock.common.security.JwtProperties;
-import com.codgo.ulock.common.security.SecurityProperties;
 import com.codgo.ulock.common.web.ClientIp;
 import com.codgo.ulock.role.AccessService;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
+import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import com.codgo.ulock.tenant.Tenant;
 import com.codgo.ulock.tenant.TenantService;
-import com.codgo.ulock.user.User;
-import com.codgo.ulock.user.UserCredentialsRevokedEvent;
-import com.codgo.ulock.user.UserRepository;
+import com.codgo.ulock.user.application.port.in.AuthenticateUserUseCase;
+import com.codgo.ulock.user.application.port.in.GetUserUseCase;
+import com.codgo.ulock.user.application.port.in.event.UserCredentialsRevokedEvent;
+import com.codgo.ulock.user.application.port.in.model.AuthenticationResult;
+import com.codgo.ulock.user.application.port.in.model.UserView;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
@@ -38,29 +41,29 @@ class AuthService {
     private static final int REFRESH_TOKEN_BYTES = 32;
 
     private final TenantService tenantService;
-    private final UserRepository users;
+    private final AuthenticateUserUseCase authenticateUser;
+    private final GetUserUseCase getUser;
     private final PasswordEncoder passwordEncoder;
     private final AccessService accessService;
     private final AccessTokenIssuer accessTokens;
     private final RefreshTokenRepository refreshTokens;
     private final AuditService audit;
-    private final SecurityProperties securityProperties;
     private final JwtProperties jwtProperties;
     private final Clock clock;
-    /** Compared against when no user matches, so response timing does not reveal whether one exists. */
+    /** Compared against when no tenant matches, so response timing does not reveal whether one exists. */
     private final String dummyPasswordHash;
 
-    AuthService(TenantService tenantService, UserRepository users, PasswordEncoder passwordEncoder,
-                AccessService accessService, AccessTokenIssuer accessTokens, RefreshTokenRepository refreshTokens,
-                AuditService audit, SecurityProperties securityProperties, JwtProperties jwtProperties, Clock clock) {
+    AuthService(TenantService tenantService, AuthenticateUserUseCase authenticateUser, GetUserUseCase getUser,
+                PasswordEncoder passwordEncoder, AccessService accessService, AccessTokenIssuer accessTokens,
+                RefreshTokenRepository refreshTokens, AuditService audit, JwtProperties jwtProperties, Clock clock) {
         this.tenantService = tenantService;
-        this.users = users;
+        this.authenticateUser = authenticateUser;
+        this.getUser = getUser;
         this.passwordEncoder = passwordEncoder;
         this.accessService = accessService;
         this.accessTokens = accessTokens;
         this.refreshTokens = refreshTokens;
         this.audit = audit;
-        this.securityProperties = securityProperties;
         this.jwtProperties = jwtProperties;
         this.clock = clock;
         this.dummyPasswordHash = passwordEncoder.encode(SecureTokens.random(16));
@@ -68,33 +71,33 @@ class AuthService {
 
     @Transactional(noRollbackFor = AuthenticationFailedException.class)
     TokenResponse login(LoginRequest request) {
-        Instant now = clock.instant();
         Optional<Tenant> tenant = tenantService.findBySlug(request.tenantSlug());
-        Optional<User> candidate = tenant.flatMap(t -> users.findForLogin(t.getId(), User.normalizeEmail(request.email())));
-        if (candidate.isEmpty()) {
+        if (tenant.isEmpty()) {
             passwordEncoder.matches(request.password(), dummyPasswordHash);
-            tenant.ifPresent(t -> recordLoginFailure(null, t.getId(), request.email(), "UNKNOWN_USER"));
             throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
-        User user = candidate.get();
+        TenantId tenantId = TenantId.of(tenant.get().getId());
         if (!tenant.get().isActive()) {
             passwordEncoder.matches(request.password(), dummyPasswordHash);
-            recordLoginFailure(user.getId(), user.getTenantId(), user.getEmail(), "TENANT_SUSPENDED");
+            Optional<UserView> user = getUser.findUserByEmail(tenantId, request.email());
+            recordLoginFailure(user.orElse(null), tenantId, request.email(),
+                    user.isPresent() ? "TENANT_SUSPENDED" : "UNKNOWN_USER");
             throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
-        if (!user.isActive() || user.isLocked(now)) {
-            passwordEncoder.matches(request.password(), dummyPasswordHash);
-            recordLoginFailure(user.getId(), user.getTenantId(), user.getEmail(), user.isActive() ? "LOCKED" : "INACTIVE");
+        AuthenticationResult result = authenticateUser.authenticate(tenantId, request.email(), request.password());
+        if (!result.authenticated()) {
+            recordLoginFailure(result.user(), tenantId, request.email(), result.outcome().name());
+            if (result.lockedNow()) {
+                UUID userId = result.user().id().value();
+                audit.recordAs(userId, tenantId.value(), AuditAction.ACCOUNT_LOCKED,
+                        AuditTarget.of(AuditTarget.USER, userId), Map.of("lockedUntil", result.lockedUntil().toString()));
+            }
             throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            registerBadPassword(user, now);
-            throw new AuthenticationFailedException(INVALID_CREDENTIALS);
-        }
-        user.registerSuccessfulLogin(now);
-        audit.recordAs(user.getId(), user.getTenantId(), AuditAction.LOGIN_SUCCEEDED,
-                AuditTarget.of(AuditTarget.USER, user.getId()), null);
-        return issue(user, now).response();
+        UUID userId = result.user().id().value();
+        audit.recordAs(userId, tenantId.value(), AuditAction.LOGIN_SUCCEEDED, AuditTarget.of(AuditTarget.USER, userId),
+                null);
+        return issue(userId, tenantId.value(), clock.instant()).response();
     }
 
     @Transactional(noRollbackFor = AuthenticationFailedException.class)
@@ -114,11 +117,14 @@ class AuthService {
         if (token.isExpired(now)) {
             throw new AuthenticationFailedException(INVALID_REFRESH_TOKEN);
         }
-        User user = users.findById(token.getUserId())
-                .filter(User::isActive)
-                .filter(u -> tenantService.get(u.getTenantId()).isActive())
-                .orElseThrow(() -> new AuthenticationFailedException(INVALID_REFRESH_TOKEN));
-        IssuedTokens issued = issue(user, now);
+        boolean sessionStillValid = getUser.findUser(TenantId.of(token.getTenantId()), UserId.of(token.getUserId()))
+                .filter(UserView::active)
+                .filter(u -> tenantService.get(token.getTenantId()).isActive())
+                .isPresent();
+        if (!sessionStillValid) {
+            throw new AuthenticationFailedException(INVALID_REFRESH_TOKEN);
+        }
+        IssuedTokens issued = issue(token.getUserId(), token.getTenantId(), now);
         token.rotateTo(issued.refreshTokenId(), now);
         return issued.response();
     }
@@ -138,30 +144,23 @@ class AuthService {
     @EventListener
     @Transactional
     public void onUserCredentialsRevoked(UserCredentialsRevokedEvent event) {
-        refreshTokens.revokeAllActive(event.userId(), clock.instant());
+        refreshTokens.revokeAllActive(event.userId().value(), clock.instant());
     }
 
-    private void registerBadPassword(User user, Instant now) {
-        boolean lockedNow = user.registerFailedLogin(now, securityProperties.maxFailedLogins(),
-                securityProperties.failedLoginWindow(), securityProperties.lockDuration());
-        recordLoginFailure(user.getId(), user.getTenantId(), user.getEmail(), "BAD_PASSWORD");
-        if (lockedNow) {
-            audit.recordAs(user.getId(), user.getTenantId(), AuditAction.ACCOUNT_LOCKED,
-                    AuditTarget.of(AuditTarget.USER, user.getId()), Map.of("lockedUntil", user.getLockedUntil().toString()));
-        }
-    }
-
-    private void recordLoginFailure(UUID userId, UUID tenantId, String email, String reason) {
-        audit.recordAs(userId, tenantId, AuditAction.LOGIN_FAILED,
+    /** Known users are recorded as actor and target, with their stored email; unknown ones by the attempted email. */
+    private void recordLoginFailure(UserView user, TenantId tenantId, String attemptedEmail, String reason) {
+        UUID userId = user == null ? null : user.id().value();
+        String email = user == null ? attemptedEmail : user.email().value();
+        audit.recordAs(userId, tenantId.value(), AuditAction.LOGIN_FAILED,
                 userId == null ? null : AuditTarget.of(AuditTarget.USER, userId),
                 Map.of("email", email, "reason", reason));
     }
 
-    private IssuedTokens issue(User user, Instant now) {
+    private IssuedTokens issue(UUID userId, UUID tenantId, Instant now) {
         String rawRefreshToken = SecureTokens.random(REFRESH_TOKEN_BYTES);
-        RefreshToken refreshToken = refreshTokens.save(new RefreshToken(user.getId(), user.getTenantId(),
+        RefreshToken refreshToken = refreshTokens.save(new RefreshToken(userId, tenantId,
                 SecureTokens.sha256(rawRefreshToken), now, now.plus(jwtProperties.refreshTokenTtl()), ClientIp.current()));
-        String accessToken = accessTokens.forUser(user.getId(), user.getTenantId(), accessService.roleNamesOf(user.getId()));
+        String accessToken = accessTokens.forUser(userId, tenantId, accessService.roleNamesOf(userId));
         TokenResponse response = new TokenResponse(accessToken, "Bearer", accessTokens.ttlSeconds(), rawRefreshToken,
                 jwtProperties.refreshTokenTtl().toSeconds());
         return new IssuedTokens(refreshToken.getId(), response);

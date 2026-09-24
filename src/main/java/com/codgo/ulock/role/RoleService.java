@@ -9,6 +9,11 @@ import com.codgo.ulock.role.RoleDtos.CreateRoleRequest;
 import com.codgo.ulock.role.RoleDtos.RoleMemberResponse;
 import com.codgo.ulock.role.RoleDtos.RoleResponse;
 import com.codgo.ulock.role.RoleDtos.UpdateRoleRequest;
+import com.codgo.ulock.sharedkernel.paging.PageQuery;
+import com.codgo.ulock.sharedkernel.paging.PageResult;
+import com.codgo.ulock.sharedkernel.valueobject.TenantId;
+import com.codgo.ulock.sharedkernel.valueobject.UserId;
+import com.codgo.ulock.user.application.port.in.GetUserUseCase;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -27,14 +32,16 @@ class RoleService {
     private final UserRoleRepository userRoles;
     private final PermissionService permissionService;
     private final PrivilegeGuard privilegeGuard;
+    private final GetUserUseCase getUser;
     private final AuditService audit;
 
     RoleService(RoleRepository roles, UserRoleRepository userRoles, PermissionService permissionService,
-                PrivilegeGuard privilegeGuard, AuditService audit) {
+                PrivilegeGuard privilegeGuard, GetUserUseCase getUser, AuditService audit) {
         this.roles = roles;
         this.userRoles = userRoles;
         this.permissionService = permissionService;
         this.privilegeGuard = privilegeGuard;
+        this.getUser = getUser;
         this.audit = audit;
     }
 
@@ -109,9 +116,10 @@ class RoleService {
     }
 
     @Transactional(readOnly = true)
-    Page<RoleMemberResponse> members(UUID tenantId, UUID roleId, Pageable pageable) {
+    PageResult<RoleMemberResponse> members(UUID tenantId, UUID roleId, PageQuery page) {
         find(tenantId, roleId);
-        return userRoles.findMembersOfRole(roleId, pageable).map(RoleMemberResponse::from);
+        List<UserId> memberIds = userRoles.findMemberIds(roleId).stream().map(UserId::of).toList();
+        return getUser.listUsers(TenantId.of(tenantId), memberIds, page).map(RoleMemberResponse::from);
     }
 
     Role find(UUID tenantId, UUID roleId) {
