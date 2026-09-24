@@ -36,32 +36,29 @@ object or domain event unless it solves a problem you have now.
 
 Keep the flat slices flat until they grow rules that need more.
 
-Within every layer, related classes are grouped into their own subpackage by concept, as shown below.
-Never leave events, exceptions, commands or DTOs loose next to the classes that use them.
+A structured slice is **one package per role**, flat inside. Don't add a subpackage until a package
+grows past roughly a dozen files and a real grouping suggests itself; a package holding one or two
+files is nesting for its own sake.
 
 ```
 com.codgo.ulock
 ├── sharedkernel/                 pure Java, immutable
-│   ├── valueobject/              TenantId, UserId, RoleId, Email
+│   ├── valueobject/              TenantId, UserId, Email
 │   ├── event/                    DomainEvent, DomainEventPublisherPort (one port for all slices)
 │   ├── exception/                DomainException (+ Category → HTTP status)
 │   └── paging/                   PageQuery, PageResult
-├── <slice>/                      e.g. user (done), role, tenant, auth, audit (not yet migrated)
-│   ├── domain/                   pure Java
-│   │   ├── model/                aggregate root, enums, small result types
-│   │   ├── policy/               stateless rules that are not an entity (PasswordPolicy)
-│   │   ├── event/                domain events (records implementing DomainEvent)
-│   │   └── exception/            DomainException subclasses
-│   ├── application/
-│   │   ├── port/in/              use-case interfaces called by OTHER slices only
-│   │   │   ├── command/          input records of those use cases
-│   │   │   ├── model/            read models returned to other slices (e.g. UserView)
-│   │   │   └── event/            published events other slices may listen to
-│   │   ├── port/out/<concern>/   outbound ports grouped by concern: persistence/, security/, …
-│   │   └── service/              use-case implementations (+ command/, mapper/ subpackages)
-│   └── adapter/
-│       ├── in/web/               controller (+ dto/ for request/response records)
-│       └── out/<concern>/        persistence/ (adapter + entity/, repository/, mapper/), security/, audit/, …
+├── <slice>/                      e.g. user (structured); role, tenant, auth, audit are flat
+│   ├── api/                      THE public face of the slice — the only part other slices may use:
+│   │                             the api interface, its command records, its read models
+│   │                             (UserView, AuthenticationResult) and its published events.
+│   │                             Depends on sharedkernel only, never on the slice's own domain.
+│   ├── domain/                   pure Java: aggregate, enums, policies, domain events, exceptions
+│   ├── application/              handlers (one per command), the read side, and the outbound
+│   │                             interfaces they depend on (UserRepository, PasswordHasher, …)
+│   ├── web/                      controller + request/response records
+│   ├── persistence/              JpaEntity, Spring Data repository, repository adapter
+│   └── infra/                    the remaining outbound adapters: password hashing, audit
+│                                 listener, cross-slice policy
 └── common/                       cross-cutting infrastructure: security, error handling, web helpers,
                                   event/SpringDomainEventPublisher
 ```
@@ -73,27 +70,36 @@ com.codgo.ulock
    Jackson, Lombok or validation annotations.
 3. **Application layer.** `application/` depends only on its own domain and on the shared kernel. The only
    framework annotations allowed are `@Service` and `@Transactional`. It may also use `java.time.Clock`.
-4. **Outbound ports.** Every dependency on infrastructure goes through an outbound port interface in
-   `application/port/out`. That includes persistence, hashing, events, other slices, configuration and the
-   current actor. Services never use repositories, BCrypt, Spring events or `SecurityContext` directly.
-   The controller passes the actor's id in the command.
-5. **Inbound ports.** Only use cases called from outside the slice get an inbound port. Controllers inside
-   the slice call the services directly.
-6. **JPA entities.** JPA entities (`*JpaEntity`) live only in `adapter/out/persistence/..`. They are never
+4. **Outbound interfaces.** Every dependency on infrastructure goes through an interface declared in
+   `application/`, implemented in `persistence/` or `infra/`. That includes persistence, hashing, events,
+   other slices, configuration and the current actor. Handlers never use repositories, BCrypt, Spring
+   events or `SecurityContext` directly. The controller passes the actor's id in the command.
+5. **The api package.** A slice exposes exactly one interface in `api/`, plus the commands, read models
+   and events that interface needs. Controllers inside the slice call the handlers directly, not `api/`.
+   Nothing in `api/` may reference the slice's own `domain/`, so callers cannot reach it transitively.
+6. **JPA entities.** JPA entities (`*JpaEntity`) live only in `persistence/`. They are never
    returned from controllers and never passed into the domain. The persistence adapter maps entity to
    aggregate by hand, with `User.restore(...)`, and the reverse through getters. There's no intermediate
    model and no mapping library.
 7. **Business rules in the domain.** Examples: `User.deactivate()`, and the rule that no one may
    deactivate themselves. A deactivated user can only be reactivated through `activate()`.
    Cross-aggregate checks, such as email being unique per tenant, are done in the service through a port.
-8. **Slice boundaries.** Other slices, and `common`, may only use `<slice>/application/port/in/..`. They may
-   never use a slice's domain, adapter, application service or outbound ports. To react to another slice,
-   listen to the events in its `port/in/event`. Its domain events are internal.
+8. **Slice boundaries.** Other slices, and `common`, may only use `<slice>/api/..`. They may never use a
+   slice's `domain`, `application`, `web`, `persistence` or `infra`. To react to another slice, listen to
+   the events published in its `api/`. Its domain events are internal.
 9. **Controllers.** Controllers return DTO records. Errors go through `common/error/GlobalExceptionHandler`
    as RFC 7807 ProblemDetail. A `DomainException`'s category decides the HTTP status.
 
 `src/test/java/com/codgo/ulock/ArchitectureTest.java` enforces rules 1–3, 6 and 8 for every slice,
 discovered automatically. Keep it green. Never weaken a rule to make a change pass.
+
+> **Layout change, 2026-09-24.** The `user` slice used to nest
+> `application/port/{in,out}/<concern>/`, `application/service/{command,mapper}/`,
+> `adapter/in/web/dto/` and `adapter/out/{persistence/{entity,repository},access,audit,security}/`:
+> 41 files across 21 directories, 12 of which held a single file. It was flattened to the six
+> packages above. The rule that was dropped is the mandatory per-concept subpackage grouping —
+> deliberately, by the project owner. Every dependency-direction and purity rule survived and is
+> still enforced; the cross-slice boundary moved from `application/port/in` to `api/`.
 
 ## Commands, queries and authorization
 
@@ -155,7 +161,7 @@ discovered automatically. Keep it green. Never weaken a rule to make a change pa
   - The id-list user lookup was dropped: role members is now a single SQL projection.
 - **Timestamps and ids.** The domain assigns them, using `Clock` and `UserId.newId()`. The JPA entity has no
   Hibernate timestamp annotations.
-- **Auditing through events.** An adapter in the slice (`adapter/out/audit`) listens to its domain events
+- **Auditing through events.** An adapter in the slice (`infra/UserAuditEventListener`) listens to its domain events
   and writes the audit records, synchronously and in the same transaction.
 - **Paging.** Application code uses `PageQuery`/`PageResult`. Controllers convert with
   `common/web/PageQueries` and `PageResponse.of(PageResult, …)`.

@@ -29,8 +29,10 @@ class ArchitectureTest {
 
     static final String ROOT = "com.codgo.ulock";
     private static final Set<String> NOT_SLICES = Set.of("common", "sharedkernel");
-    /** Parts of a slice that no other slice may use; only application.port.in is public. */
-    private static final String[] SLICE_INTERNALS = {"domain", "adapter", "application.service", "application.port.out"};
+    /** Parts of a slice that no other slice may use; only the slice's api package is public. */
+    private static final String[] SLICE_INTERNALS = {"domain", "application", "web", "persistence", "infra"};
+    /** Driven and driving adapters: everything that talks to the outside world. */
+    private static final String[] ADAPTERS = {ROOT + ".*.web..", ROOT + ".*.persistence..", ROOT + ".*.infra.."};
 
     @ArchTest
     static final ArchRule domainAndSharedKernelArePureJava = noClasses()
@@ -42,18 +44,19 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule applicationDoesNotDependOnAdapters = noClasses()
-            .that().resideInAPackage(ROOT + ".*.application..")
-            .should().dependOnClassesThat().resideInAPackage(ROOT + ".*.adapter..")
+            .that().resideInAnyPackage(ROOT + ".*.application..", ROOT + ".*.api..")
+            .should().dependOnClassesThat().resideInAnyPackage(ADAPTERS)
             .because("dependencies point inwards: adapter -> application -> domain");
 
     @ArchTest
     static final ArchRule applicationUsesOnlyDomainSharedKernelAndTransactions = classes()
-            .that().resideInAPackage(ROOT + ".*.application..")
+            .that().resideInAnyPackage(ROOT + ".*.application..", ROOT + ".*.api..")
             .should().onlyDependOnClassesThat(resideInAnyPackage("java..", ROOT + ".sharedkernel..",
-                    ROOT + ".*.domain..", ROOT + ".*.application..", "org.springframework.transaction.annotation..")
+                    ROOT + ".*.domain..", ROOT + ".*.application..", ROOT + ".*.api..",
+                    "org.springframework.transaction.annotation..")
                     .or(JavaClass.Predicates.equivalentTo(Service.class)))
             .because("application code may only use @Service and @Transactional from the framework; "
-                    + "all infrastructure is reached through outbound ports");
+                    + "all infrastructure is reached through outbound interfaces");
 
     @ArchTest
     static void otherSlicesUseOnlyTheInboundPorts(JavaClasses classes) {
@@ -65,7 +68,7 @@ class ArchitectureTest {
             noClasses()
                     .that().resideOutsideOfPackage(ROOT + "." + slice + "..")
                     .should().dependOnClassesThat().resideInAnyPackage(internals)
-                    .because("other slices may only use " + slice + ".application.port.in")
+                    .because("other slices may only use " + slice + ".api")
                     .check(classes);
         }
     }
@@ -73,7 +76,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule jpaEntitiesLiveInPersistenceAdapters = classes()
             .that().haveSimpleNameEndingWith("JpaEntity")
-            .should().resideInAPackage(ROOT + ".*.adapter.out.persistence..")
+            .should().resideInAPackage(ROOT + ".*.persistence..")
             .allowEmptyShould(true);
 
     @ArchTest
@@ -103,7 +106,7 @@ class ArchitectureTest {
             @Override
             public void check(JavaClass entity, ConditionEvents events) {
                 String pkg = entity.getPackageName();
-                String marker = ".adapter.out.persistence";
+                String marker = ".persistence";
                 String adapterRoot = pkg.contains(marker) ? pkg.substring(0, pkg.indexOf(marker) + marker.length()) : pkg;
                 for (Dependency dependency : entity.getDirectDependenciesToSelf()) {
                     String origin = dependency.getOriginClass().getPackageName();

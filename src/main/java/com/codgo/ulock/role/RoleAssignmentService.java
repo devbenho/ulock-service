@@ -7,7 +7,7 @@ import com.codgo.ulock.common.error.NotFoundException;
 import com.codgo.ulock.common.security.CurrentActor;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
-import com.codgo.ulock.user.application.port.in.GetUserUseCase;
+import com.codgo.ulock.user.api.GetUserUseCase;
 import java.time.Clock;
 import java.util.Map;
 import java.util.UUID;
