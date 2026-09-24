@@ -1,5 +1,7 @@
 package com.codgo.ulock.role;
 
+import com.codgo.ulock.common.PlatformTenant;
+import com.codgo.ulock.common.error.InvalidRequestException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -20,6 +22,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Entity
 @Table(name = "roles")
 public class Role {
+
+    public static final int MAX_NAME_LENGTH = 100;
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -51,8 +55,20 @@ public class Role {
 
     Role(UUID tenantId, String name, String description) {
         this.tenantId = tenantId;
-        this.name = name;
+        this.name = normalizeName(name);
         this.description = description;
+    }
+
+    /**
+     * Role names are trimmed and runs of whitespace collapse to one space. The case the admin typed is
+     * kept for display. Uniqueness within a tenant ignores case (enforced by {@code uq_roles_tenant_name}).
+     */
+    public static String normalizeName(String name) {
+        String normalized = name == null ? "" : name.strip().replaceAll("\\s+", " ");
+        if (normalized.isEmpty() || normalized.length() > MAX_NAME_LENGTH) {
+            throw new InvalidRequestException("Role name must be 1 to " + MAX_NAME_LENGTH + " characters");
+        }
+        return normalized;
     }
 
     public boolean isReserved() {
@@ -60,7 +76,7 @@ public class Role {
     }
 
     void rename(String name) {
-        this.name = name;
+        this.name = normalizeName(name);
     }
 
     void describe(String description) {
@@ -68,8 +84,24 @@ public class Role {
     }
 
     void replacePermissions(Collection<Permission> newPermissions) {
+        requireCanHold(newPermissions);
         permissions.clear();
         permissions.addAll(newPermissions);
+    }
+
+    /**
+     * A role may hold its own tenant's permissions and system permissions. Platform-only system
+     * permissions are allowed only in the platform tenant.
+     */
+    void requireCanHold(Collection<Permission> candidates) {
+        for (Permission permission : candidates) {
+            if (!permission.isSystem() && !permission.getTenantId().equals(tenantId)) {
+                throw new InvalidRequestException("Permission " + permission.getCode() + " belongs to another tenant");
+            }
+            if (permission.isPlatformOnly() && !PlatformTenant.is(tenantId)) {
+                throw new InvalidRequestException("Permission " + permission.getCode() + " is platform-only");
+            }
+        }
     }
 
     public UUID getId() { return id; }

@@ -5,4 +5,4 @@ import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
 import java.time.Instant;
 
-public record UserUpdated(UserId userId, TenantId tenantId, String fullName, Instant occurredAt) implements DomainEvent {}
+public record UserRenamed(UserId userId, TenantId tenantId, String fullName, Instant occurredAt) implements DomainEvent {}

@@ -53,8 +53,7 @@ class AuthServiceTest {
     private final AuditService audit = mock(AuditService.class);
 
     private final UUID tenantId = UUID.randomUUID();
-    private final UserView user = new UserView(UserId.newId(), TenantId.of(tenantId), Email.of("u@acme.test"), "U",
-            "ACTIVE", true);
+    private final UserView user = view("ACTIVE");
     private AuthService service;
     private Tenant tenant;
 
@@ -128,7 +127,7 @@ class AuthServiceTest {
     void successfulLoginIssuesBothTokens() {
         when(authenticateUser.authenticate(TenantId.of(tenantId), "u@acme.test", "right"))
                 .thenReturn(new AuthenticationResult(Outcome.AUTHENTICATED, user, null));
-        when(accessService.roleNamesOf(user.id().value())).thenReturn(List.of("TENANT_ADMIN"));
+        when(accessService.roleNamesOf(tenantId, user.id().value())).thenReturn(List.of("TENANT_ADMIN"));
         when(accessTokens.forUser(user.id().value(), tenantId, List.of("TENANT_ADMIN"))).thenReturn("jwt");
 
         var response = service.login(new LoginRequest("acme", "u@acme.test", "right"));
@@ -144,10 +143,16 @@ class AuthServiceTest {
         RefreshToken token = new RefreshToken(user.id().value(), tenantId, "h", NOW, NOW.plusSeconds(60), null);
         when(refreshTokens.findByTokenHashForUpdate(SecureTokens.sha256("raw"))).thenReturn(Optional.of(token));
         when(getUser.findUser(TenantId.of(tenantId), user.id()))
-                .thenReturn(Optional.of(new UserView(user.id(), user.tenantId(), user.email(), "U", "INACTIVE", false)));
+                .thenReturn(Optional.of(view("INACTIVE")));
 
         assertThatThrownBy(() -> service.refresh("raw")).isInstanceOf(AuthenticationFailedException.class);
         assertThat(token.isRevoked()).isFalse();
+    }
+
+    private UserView view(String status) {
+        UserId id = user == null ? UserId.newId() : user.id();
+        return new UserView(id, TenantId.of(tenantId), Email.of("u@acme.test"), "U", status, "ACTIVE".equals(status),
+                null, null, NOW, NOW);
     }
 
     @Test

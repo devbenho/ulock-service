@@ -10,9 +10,10 @@ import com.codgo.ulock.user.adapter.in.web.dto.ResetPasswordRequest;
 import com.codgo.ulock.user.adapter.in.web.dto.UpdateUserRequest;
 import com.codgo.ulock.user.adapter.in.web.dto.UserResponse;
 import com.codgo.ulock.user.application.port.in.command.CreateUserCommand;
+import com.codgo.ulock.user.application.port.in.model.UserView;
+import com.codgo.ulock.user.application.service.UserQueryService;
 import com.codgo.ulock.user.application.service.UserService;
 import com.codgo.ulock.user.application.service.command.UpdateUserCommand;
-import com.codgo.ulock.user.domain.model.User;
 import com.codgo.ulock.user.domain.model.UserStatus;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -31,22 +32,25 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/** Writes go to {@link UserService}, reads to {@link UserQueryService}. */
 @RestController
 @RequestMapping("/api/v1/tenants/{tenantId}/users")
 class UserController {
 
     private final UserService userService;
+    private final UserQueryService userQueries;
     private final Clock clock;
 
-    UserController(UserService userService, Clock clock) {
+    UserController(UserService userService, UserQueryService userQueries, Clock clock) {
         this.userService = userService;
+        this.userQueries = userQueries;
         this.clock = clock;
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('user:write')")
     ResponseEntity<UserResponse> create(@PathVariable UUID tenantId, @Valid @RequestBody CreateUserRequest request) {
-        User user = userService.create(
+        UserView user = userService.createUser(
                 new CreateUserCommand(TenantId.of(tenantId), request.email(), request.fullName(), request.password()));
         return ResponseEntity.created(URI.create("/api/v1/tenants/" + tenantId + "/users/" + user.id()))
                 .body(toResponse(user));
@@ -57,14 +61,14 @@ class UserController {
     PageResponse<UserResponse> list(@PathVariable UUID tenantId,
                                     @RequestParam(required = false) UserStatus status,
                                     @SortDefault(sort = {"email", "id"}) Pageable pageable) {
-        return PageResponse.of(userService.list(TenantId.of(tenantId), status, PageQueries.from(pageable)),
+        return PageResponse.of(userQueries.list(TenantId.of(tenantId), status, PageQueries.from(pageable)),
                 this::toResponse);
     }
 
     @GetMapping("/{userId}")
     @PreAuthorize("hasAuthority('user:read')")
     UserResponse get(@PathVariable UUID tenantId, @PathVariable UUID userId) {
-        return toResponse(userService.get(TenantId.of(tenantId), UserId.of(userId)));
+        return toResponse(userQueries.getUser(TenantId.of(tenantId), UserId.of(userId)));
     }
 
     @PatchMapping("/{userId}")
@@ -84,7 +88,7 @@ class UserController {
         return ResponseEntity.noContent().build();
     }
 
-    private UserResponse toResponse(User user) {
+    private UserResponse toResponse(UserView user) {
         return UserResponse.from(user, clock.instant());
     }
 }

@@ -13,7 +13,13 @@ import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.stereotype.Component;
 
-/** Signs RS256 access tokens for users and machine clients. */
+/**
+ * Signs RS256 access tokens for users and machine clients.
+ * <p>A user token carries identity and tenant context: {@code sub} and {@code tid}. Its {@code roles}
+ * claim is informational only. It is fixed when the token is issued and can be up to 15 minutes stale,
+ * so nothing may authorize on it. uLock resolves permissions from the database on every request, and
+ * other services must call {@code /authz/check}.
+ */
 @Component
 class AccessTokenIssuer {
 

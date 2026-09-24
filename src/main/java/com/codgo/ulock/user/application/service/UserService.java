@@ -1,8 +1,6 @@
 package com.codgo.ulock.user.application.service;
 
 import com.codgo.ulock.sharedkernel.event.DomainEventPublisherPort;
-import com.codgo.ulock.sharedkernel.paging.PageQuery;
-import com.codgo.ulock.sharedkernel.paging.PageResult;
 import com.codgo.ulock.sharedkernel.valueobject.Email;
 import com.codgo.ulock.sharedkernel.valueobject.TenantId;
 import com.codgo.ulock.sharedkernel.valueobject.UserId;
@@ -12,7 +10,6 @@ import com.codgo.ulock.user.application.port.in.event.UserCredentialsRevokedEven
 import com.codgo.ulock.user.application.port.in.model.UserView;
 import com.codgo.ulock.user.application.port.out.persistence.LoadUserPort;
 import com.codgo.ulock.user.application.port.out.persistence.SaveUserPort;
-import com.codgo.ulock.user.application.port.out.persistence.UserFilter;
 import com.codgo.ulock.user.application.port.out.security.AdministrationPolicyPort;
 import com.codgo.ulock.user.application.port.out.security.PasswordHasherPort;
 import com.codgo.ulock.user.application.service.command.UpdateUserCommand;
@@ -27,7 +24,7 @@ import java.time.Instant;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Administration of users within a tenant: create, list, read, update, deactivate, reset password. */
+/** User administration commands within a tenant: create, rename, activate/deactivate, reset password. */
 @Service
 public class UserService implements CreateUserUseCase {
 
@@ -48,8 +45,9 @@ public class UserService implements CreateUserUseCase {
         this.clock = clock;
     }
 
+    @Override
     @Transactional
-    public User create(CreateUserCommand command) {
+    public UserView createUser(CreateUserCommand command) {
         PasswordPolicy.validate(command.password());
         Email email = Email.of(command.email());
         if (loadUsers.existsByEmail(command.tenantId(), email)) {
@@ -58,28 +56,12 @@ public class UserService implements CreateUserUseCase {
         User user = User.register(command.tenantId(), email, passwordHasher.hash(command.password()),
                 command.fullName(), clock.instant());
         saveAndPublish(user);
-        return user;
-    }
-
-    @Override
-    @Transactional
-    public UserView createUser(CreateUserCommand command) {
-        return UserViews.from(create(command));
-    }
-
-    @Transactional(readOnly = true)
-    public PageResult<User> list(TenantId tenantId, UserStatus status, PageQuery page) {
-        return loadUsers.loadUsers(tenantId, status == null ? UserFilter.none() : UserFilter.byStatus(status), page);
-    }
-
-    @Transactional(readOnly = true)
-    public User get(TenantId tenantId, UserId userId) {
-        return loadUsers.loadUser(tenantId, userId).orElseThrow(() -> new UserNotFoundException(userId));
+        return UserViews.from(user);
     }
 
     @Transactional
-    public User update(UpdateUserCommand command) {
-        User user = get(command.tenantId(), command.userId());
+    public UserView update(UpdateUserCommand command) {
+        User user = load(command.tenantId(), command.userId());
         Instant now = clock.instant();
         if (command.fullName() != null) {
             user.rename(command.fullName(), now);
@@ -97,19 +79,23 @@ public class UserService implements CreateUserUseCase {
         if (deactivated) {
             events.publish(new UserCredentialsRevokedEvent(user.id(), now));
         }
-        return user;
+        return UserViews.from(user);
     }
 
     /** An administrator sets a new password; the user's sessions end and any lock is lifted. */
     @Transactional
     public void resetPassword(TenantId tenantId, UserId userId, String newPassword) {
         PasswordPolicy.validate(newPassword);
-        User user = get(tenantId, userId);
+        User user = load(tenantId, userId);
         administrationPolicy.requireCanAdminister(tenantId, userId);
         Instant now = clock.instant();
         user.resetPassword(passwordHasher.hash(newPassword), now);
         saveAndPublish(user);
         events.publish(new UserCredentialsRevokedEvent(userId, now));
+    }
+
+    private User load(TenantId tenantId, UserId userId) {
+        return loadUsers.findById(tenantId, userId).orElseThrow(() -> new UserNotFoundException(userId));
     }
 
     private void saveAndPublish(User user) {

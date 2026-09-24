@@ -17,10 +17,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class PrivilegeGuard {
 
-    private final UserRoleRepository userRoles;
+    private final RoleQueryRepository queries;
 
-    PrivilegeGuard(UserRoleRepository userRoles) {
-        this.userRoles = userRoles;
+    PrivilegeGuard(RoleQueryRepository queries) {
+        this.queries = queries;
     }
 
     void requireCanGrant(Collection<Permission> permissions) {
@@ -29,10 +29,8 @@ public class PrivilegeGuard {
 
     /** The user slice calls this before deactivating a user or resetting their password. */
     public void requireCanAdminister(UUID tenantId, UUID userId) {
-        Set<String> targetPermissions = systemCodes(userRoles.findRolesOfUser(userId).stream()
-                .flatMap(role -> role.getPermissions().stream())
-                .toList());
-        requireHeld(targetPermissions, "You cannot manage a user who holds permissions you do not hold");
+        requireHeld(queries.grantedSystemPermissionCodes(tenantId, userId),
+                "You cannot manage a user who holds permissions you do not hold");
     }
 
     private static void requireHeld(Set<String> required, String detail) {

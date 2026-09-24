@@ -160,7 +160,7 @@ class AuthService {
         String rawRefreshToken = SecureTokens.random(REFRESH_TOKEN_BYTES);
         RefreshToken refreshToken = refreshTokens.save(new RefreshToken(userId, tenantId,
                 SecureTokens.sha256(rawRefreshToken), now, now.plus(jwtProperties.refreshTokenTtl()), ClientIp.current()));
-        String accessToken = accessTokens.forUser(userId, tenantId, accessService.roleNamesOf(userId));
+        String accessToken = accessTokens.forUser(userId, tenantId, accessService.roleNamesOf(tenantId, userId));
         TokenResponse response = new TokenResponse(accessToken, "Bearer", accessTokens.ttlSeconds(), rawRefreshToken,
                 jwtProperties.refreshTokenTtl().toSeconds());
         return new IssuedTokens(refreshToken.getId(), response);

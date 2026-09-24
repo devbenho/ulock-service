@@ -38,7 +38,18 @@ public class Permission {
 
     protected Permission() {}
 
+    /**
+     * Permission codes are canonical as given, with no trimming or case folding: lower-case
+     * {@code resource:action} segments, e.g. {@code invoice:approve}. A code is unique within its
+     * tenant and may not reuse a system permission's code.
+     */
+    public static final String CODE_PATTERN = "^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)+$";
+    public static final int MAX_CODE_LENGTH = 100;
+
     Permission(UUID tenantId, String code, String description) {
+        if (code == null || code.length() > MAX_CODE_LENGTH || !code.matches(CODE_PATTERN)) {
+            throw new IllegalArgumentException("Invalid permission code: " + code);
+        }
         this.tenantId = tenantId;
         this.code = code;
         this.description = description;
@@ -46,6 +57,10 @@ public class Permission {
 
     public boolean isSystem() {
         return tenantId == null;
+    }
+
+    public boolean isPlatformOnly() {
+        return isSystem() && SystemPermission.platformOnlyCodes().contains(code);
     }
 
     public UUID getId() { return id; }

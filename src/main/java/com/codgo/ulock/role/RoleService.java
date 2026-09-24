@@ -9,11 +9,6 @@ import com.codgo.ulock.role.RoleDtos.CreateRoleRequest;
 import com.codgo.ulock.role.RoleDtos.RoleMemberResponse;
 import com.codgo.ulock.role.RoleDtos.RoleResponse;
 import com.codgo.ulock.role.RoleDtos.UpdateRoleRequest;
-import com.codgo.ulock.sharedkernel.paging.PageQuery;
-import com.codgo.ulock.sharedkernel.paging.PageResult;
-import com.codgo.ulock.sharedkernel.valueobject.TenantId;
-import com.codgo.ulock.sharedkernel.valueobject.UserId;
-import com.codgo.ulock.user.application.port.in.GetUserUseCase;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -32,22 +27,22 @@ class RoleService {
     private final UserRoleRepository userRoles;
     private final PermissionService permissionService;
     private final PrivilegeGuard privilegeGuard;
-    private final GetUserUseCase getUser;
+    private final RoleQueryRepository queries;
     private final AuditService audit;
 
     RoleService(RoleRepository roles, UserRoleRepository userRoles, PermissionService permissionService,
-                PrivilegeGuard privilegeGuard, GetUserUseCase getUser, AuditService audit) {
+                PrivilegeGuard privilegeGuard, RoleQueryRepository queries, AuditService audit) {
         this.roles = roles;
         this.userRoles = userRoles;
         this.permissionService = permissionService;
         this.privilegeGuard = privilegeGuard;
-        this.getUser = getUser;
+        this.queries = queries;
         this.audit = audit;
     }
 
     @Transactional
     RoleResponse create(UUID tenantId, CreateRoleRequest request) {
-        String name = request.name().trim();
+        String name = Role.normalizeName(request.name());
         requireAvailableName(tenantId, name);
         Role role = roles.save(new Role(tenantId, name, request.description()));
         audit.record(tenantId, AuditAction.ROLE_CREATED, AuditTarget.of(AuditTarget.ROLE, role.getId()),
@@ -69,8 +64,8 @@ class RoleService {
     RoleResponse update(UUID tenantId, UUID roleId, UpdateRoleRequest request) {
         Role role = findEditable(tenantId, roleId);
         Map<String, Object> changes = new HashMap<>();
-        if (request.name() != null && !request.name().trim().equals(role.getName())) {
-            String name = request.name().trim();
+        if (request.name() != null && !Role.normalizeName(request.name()).equals(role.getName())) {
+            String name = Role.normalizeName(request.name());
             if (!name.equalsIgnoreCase(role.getName())) {
                 requireAvailableName(tenantId, name);
             }
@@ -91,7 +86,7 @@ class RoleService {
     @Transactional
     void delete(UUID tenantId, UUID roleId) {
         Role role = findEditable(tenantId, roleId);
-        if (userRoles.existsByIdRoleId(roleId)) {
+        if (userRoles.hasMembers(tenantId, roleId)) {
             throw new ConflictException("Role still has members; revoke it from all users first");
         }
         roles.delete(role);
@@ -102,7 +97,9 @@ class RoleService {
     @Transactional
     RoleResponse replacePermissions(UUID tenantId, UUID roleId, Set<UUID> permissionIds) {
         Role role = findEditable(tenantId, roleId);
-        List<Permission> permissions = permissionService.resolveAssignable(tenantId, permissionIds);
+        List<Permission> permissions = permissionService.resolveVisible(tenantId, permissionIds);
+        // An invalid request is 400 whoever asks, so validate before the caller's privileges.
+        role.requireCanHold(permissions);
         Set<Permission> current = role.getPermissions();
         Set<Permission> addedOrRemoved = new HashSet<>(current);
         addedOrRemoved.addAll(permissions);
@@ -116,10 +113,9 @@ class RoleService {
     }
 
     @Transactional(readOnly = true)
-    PageResult<RoleMemberResponse> members(UUID tenantId, UUID roleId, PageQuery page) {
+    Page<RoleMemberResponse> members(UUID tenantId, UUID roleId, Pageable pageable) {
         find(tenantId, roleId);
-        List<UserId> memberIds = userRoles.findMemberIds(roleId).stream().map(UserId::of).toList();
-        return getUser.listUsers(TenantId.of(tenantId), memberIds, page).map(RoleMemberResponse::from);
+        return queries.membersOfRole(tenantId, roleId, pageable);
     }
 
     Role find(UUID tenantId, UUID roleId) {

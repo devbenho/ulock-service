@@ -15,7 +15,6 @@ import com.codgo.ulock.user.application.port.out.persistence.LoadUserPort;
 import com.codgo.ulock.user.application.port.out.persistence.SaveUserPort;
 import com.codgo.ulock.user.application.port.out.security.PasswordHasherPort;
 import com.codgo.ulock.user.domain.model.User;
-import com.codgo.ulock.user.domain.policy.LockoutPolicy;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,14 +34,14 @@ class AuthenticateUserServiceTest {
     private final SaveUserPort saveUsers = mock(SaveUserPort.class);
     private final PasswordHasherPort hasher = mock(PasswordHasherPort.class);
     private final AuthenticateUserService service = new AuthenticateUserService(loadUsers, saveUsers, hasher,
-            new LockoutPolicy(2, Duration.ofMinutes(15), Duration.ofMinutes(15)), Clock.fixed(NOW, ZoneOffset.UTC));
+            Clock.fixed(NOW, ZoneOffset.UTC));
 
     private User user;
 
     @BeforeEach
     void setUp() {
         user = User.register(TENANT, EMAIL, "stored-hash", "U", NOW.minusSeconds(60));
-        when(loadUsers.loadUserByEmailForUpdate(TENANT, EMAIL)).thenReturn(Optional.of(user));
+        when(loadUsers.findByEmailForUpdate(TENANT, EMAIL)).thenReturn(Optional.of(user));
         when(hasher.matches("right", "stored-hash")).thenReturn(true);
     }
 
@@ -66,7 +65,7 @@ class AuthenticateUserServiceTest {
 
     @Test
     void reportsTheAttemptThatLocksTheAccount() {
-        assertThat(service.authenticate(TENANT, EMAIL.value(), "wrong").lockedNow()).isFalse();
+        failUntilOneAttemptBeforeLock();
         AuthenticationResult locking = service.authenticate(TENANT, EMAIL.value(), "wrong");
 
         assertThat(locking.outcome()).isEqualTo(Outcome.BAD_PASSWORD);
@@ -75,7 +74,7 @@ class AuthenticateUserServiceTest {
 
     @Test
     void lockedAccountsDoNotCheckTheRealPassword() {
-        service.authenticate(TENANT, EMAIL.value(), "wrong");
+        failUntilOneAttemptBeforeLock();
         service.authenticate(TENANT, EMAIL.value(), "wrong");
 
         AuthenticationResult result = service.authenticate(TENANT, EMAIL.value(), "right");
@@ -84,6 +83,12 @@ class AuthenticateUserServiceTest {
         assertThat(result.lockedNow()).isFalse();
         verify(hasher, never()).matches("right", "stored-hash");
         verify(hasher).simulateMatch("right");
+    }
+
+    private void failUntilOneAttemptBeforeLock() {
+        for (int i = 1; i < User.MAX_FAILED_LOGINS; i++) {
+            assertThat(service.authenticate(TENANT, EMAIL.value(), "wrong").lockedNow()).isFalse();
+        }
     }
 
     @Test

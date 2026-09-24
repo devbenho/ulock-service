@@ -11,7 +11,6 @@ import com.codgo.ulock.user.application.port.out.security.PasswordHasherPort;
 import com.codgo.ulock.user.application.service.mapper.UserViews;
 import com.codgo.ulock.user.domain.model.LoginAttempt;
 import com.codgo.ulock.user.domain.model.User;
-import com.codgo.ulock.user.domain.policy.LockoutPolicy;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -28,22 +27,20 @@ public class AuthenticateUserService implements AuthenticateUserUseCase {
     private final LoadUserPort loadUsers;
     private final SaveUserPort saveUsers;
     private final PasswordHasherPort passwordHasher;
-    private final LockoutPolicy lockoutPolicy;
     private final Clock clock;
 
     public AuthenticateUserService(LoadUserPort loadUsers, SaveUserPort saveUsers, PasswordHasherPort passwordHasher,
-                                   LockoutPolicy lockoutPolicy, Clock clock) {
+                                   Clock clock) {
         this.loadUsers = loadUsers;
         this.saveUsers = saveUsers;
         this.passwordHasher = passwordHasher;
-        this.lockoutPolicy = lockoutPolicy;
         this.clock = clock;
     }
 
     @Override
     @Transactional
     public AuthenticationResult authenticate(TenantId tenantId, String email, String password) {
-        Optional<User> candidate = Email.tryParse(email).flatMap(address -> loadUsers.loadUserByEmailForUpdate(tenantId, address));
+        Optional<User> candidate = Email.tryParse(email).flatMap(address -> loadUsers.findByEmailForUpdate(tenantId, address));
         if (candidate.isEmpty()) {
             passwordHasher.simulateMatch(password);
             return new AuthenticationResult(Outcome.UNKNOWN_USER, null, null);
@@ -57,7 +54,7 @@ public class AuthenticateUserService implements AuthenticateUserUseCase {
             passwordHasher.simulateMatch(password);
             matched = false;
         }
-        LoginAttempt attempt = user.recordLoginAttempt(matched, lockoutPolicy, now);
+        LoginAttempt attempt = user.recordLoginAttempt(matched, now);
         saveUsers.save(user);
         return new AuthenticationResult(outcomeOf(attempt), UserViews.from(user),
                 attempt.lockedNow() ? user.lockedUntil() : null);
